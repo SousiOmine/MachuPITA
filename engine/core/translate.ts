@@ -2,11 +2,11 @@ import type { Api, Model, Models, TextContent } from "@earendil-works/pi-ai";
 import type { Block, TokenUsageTotals } from "./types.ts";
 import { protectPlaceholders, restorePlaceholders } from "./classify.ts";
 import {
-  type GlossaryCall,
-  type GlossaryEntry,
   appendGlossary,
   buildGlossarySystemPrompt,
   extractGlossary,
+  type GlossaryCall,
+  type GlossaryEntry,
 } from "./glossary.ts";
 
 export interface TranslateJobOptions {
@@ -32,14 +32,32 @@ export interface Translator {
   ): Promise<BatchResult[]>;
   usage(): TokenUsageTotals;
   /** 文書全体の用語集を抽出する(対応する実装のみ)。 */
-  extractGlossary?(texts: string[], signal: AbortSignal): Promise<GlossaryEntry[]>;
+  extractGlossary?(
+    texts: string[],
+    signal: AbortSignal,
+  ): Promise<GlossaryEntry[]>;
   /** 用語集を反映した新しい Translator を返す(対応する実装のみ)。 */
   withGlossary?(entries: GlossaryEntry[]): Translator;
 }
+/** ターゲット言語が日本語かどうか。ラベル("日本語"等)またはコード("ja")で判定する。 */
+export function isJapaneseTarget(targetLanguage: string): boolean {
+  const t = targetLanguage.trim().toLowerCase();
+  return t === "ja" || t.includes("日本") || t.includes("japanese");
+}
+
 export function buildSystemPrompt(targetLanguage: string): string {
+  const styleRules = isJapaneseTarget(targetLanguage)
+    ? [
+      "Japanese style (MANDATORY):",
+      "1. Write in 常体 (だ・である調): sentence-final predicates must be である / だ / する / した / される / された, etc.",
+      "2. Never use 敬体 (です / ます / でした / ました), even mid-sentence.",
+      "3. Keep the same style in every item so the whole document is consistent.",
+    ]
+    : [];
   return [
     `You are a professional translator of academic papers. Translate the "text" field of every item into ${targetLanguage}.`,
     "Use a formal academic register appropriate for scholarly publications.",
+    ...styleRules,
     "Hard rules:",
     '1. Reply with ONLY a JSON array of objects shaped {"id": string, "translation": string}. No markdown fences, no commentary.',
     "2. Preserve placeholders such as [[M0]] exactly as they appear; never translate, reorder, or drop them.",

@@ -2,6 +2,8 @@ import { assertEquals } from "@std/assert";
 import {
   type BatchItem,
   type BatchResult,
+  buildSystemPrompt,
+  isJapaneseTarget,
   parseBatchResponse,
   translateBlocks,
   type Translator,
@@ -122,4 +124,23 @@ Deno.test("translateBlocks falls back to original on persistent failure", async 
   );
   assertEquals(blocks[0].status, "failed");
   assertEquals(blocks[0].translation, undefined);
+});
+
+Deno.test("isJapaneseTarget: 日本語ラベル/コードを判定する", () => {
+  assertEquals(isJapaneseTarget("日本語"), true);
+  assertEquals(isJapaneseTarget("日本語 (学術)"), true);
+  assertEquals(isJapaneseTarget("ja"), true);
+  assertEquals(isJapaneseTarget("Japanese"), true);
+  assertEquals(isJapaneseTarget("English"), false);
+  assertEquals(isJapaneseTarget("中文"), false);
+});
+
+Deno.test("buildSystemPrompt: 日本語ターゲットに常体ルールを追加する", () => {
+  const ja = buildSystemPrompt("日本語");
+  assertEquals(ja.includes("常体 (だ・である調)"), true);
+  assertEquals(ja.includes("です / ます / でした / ました"), true);
+  const en = buildSystemPrompt("English");
+  assertEquals(en.includes("常体 (だ・である調)"), false);
+  // 既存のハードルールは維持される
+  assertEquals(ja.includes("a JSON array of objects"), true);
 });
