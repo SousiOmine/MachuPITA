@@ -95,6 +95,62 @@ Deno.test("detectColumns finds two columns when a wide gap exists", () => {
   assertEquals(columns.length, 2);
 });
 
+Deno.test("detectColumns ignores full-width title and running header", () => {
+  const left = Array.from(
+    { length: 12 },
+    (_, i) => line(`left column body line ${i}`, 42, 600 - i * 12, 10, 0.9),
+  );
+  const right = Array.from(
+    { length: 12 },
+    (_, i) => line(`right column body line ${i}`, 305, 600 - i * 12, 10, 0.9),
+  );
+  const title = line(
+    "A Full Width Academic Paper Title Across Both Columns",
+    72,
+    720,
+    20,
+    0.42,
+  );
+  const header = line(
+    "JOURNAL RUNNING HEADER VOLUME 55 APRIL 2025",
+    290,
+    760,
+    7,
+    0.82,
+  );
+  const columns = detectColumns([title, header, ...left, ...right], 594);
+  assertEquals(columns.length, 2);
+  assertEquals(columns[0].x1 > 249 && columns[0].x1 < 305, true);
+});
+
+Deno.test("analyzePage keeps paragraphs inside their detected columns", () => {
+  const items: TextItemBox[] = [];
+  for (let i = 0; i < 8; i++) {
+    items.push(item(`Left paragraph line ${i}`, 42, 600 - i * 12, 10));
+    items.push(item(`Right paragraph line ${i}`, 305, 600 - i * 12, 10));
+  }
+  // 段をまたぐタイトルがあっても、本文は左右それぞれ1ブロックになる。
+  items.push(item("Wide academic title across the page", 72, 720, 20));
+  const layout = analyzePage({
+    pageNumber: 1,
+    width: 594,
+    height: 792,
+    items,
+  });
+  const leftBlock = layout.blocks.find((block) =>
+    block.originalText.startsWith("Left paragraph line 0")
+  );
+  const rightBlock = layout.blocks.find((block) =>
+    block.originalText.startsWith("Right paragraph line 0")
+  );
+  assertEquals(leftBlock?.originalText.includes("Left paragraph line 7"), true);
+  assertEquals(
+    rightBlock?.originalText.includes("Right paragraph line 7"),
+    true,
+  );
+  assertEquals(leftBlock?.originalText.includes("Right paragraph"), false);
+});
+
 Deno.test("buildLines attaches superscript items to the main line", () => {
   // 上付きの ∗ (小フォント・ベースラインより上) は名前と同じ行に取り込まれる
   const lines = buildLines([

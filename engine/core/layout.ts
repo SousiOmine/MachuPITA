@@ -19,8 +19,8 @@ const SAME_SIZE_TOLERANCE = 0.32;
 const ASCENT = 0.95;
 const DESCENT = 0.35;
 /** 行内セル分割とみなす最小ギャップ(フォントサイズ倍率 / 絶対値pt) */
-const CELL_GAP_RATIO = 1.2;
-const CELL_GAP_MIN_PT = 6;
+const CELL_GAP_RATIO = 1;
+const CELL_GAP_MIN_PT = 8;
 
 function baselineTolerance(itemFontSize: number, lineFontSize: number): number {
   const big = Math.max(itemFontSize, lineFontSize);
@@ -73,10 +73,27 @@ function emptyLine(item: TextItemBox): LineBox {
   };
 }
 
-/** 行の代表ベースライン: 最大フォントサイズの項目(主テキスト)の baseline を採用する */
+/** 文字数で重み付けした中央値。ドロップキャップや上付き文字を代表値にしない。 */
+function representativeFontSize(items: TextItemBox[]): number {
+  const weighted = [...items].sort((a, b) => a.fontSize - b.fontSize);
+  const total = weighted.reduce(
+    (sum, item) => sum + Math.max(1, item.str.trim().length),
+    0,
+  );
+  let seen = 0;
+  for (const item of weighted) {
+    seen += Math.max(1, item.str.trim().length);
+    if (seen >= total / 2) return item.fontSize;
+  }
+  return weighted.at(-1)?.fontSize ?? 10;
+}
+
+/** 行の代表ベースライン: 代表フォントサイズに近い主テキストから採用する。 */
 function dominantBaseline(items: TextItemBox[]): number {
-  const maxFs = Math.max(...items.map((i) => i.fontSize));
-  const main = items.find((i) => i.fontSize >= maxFs * 0.8);
+  const representative = representativeFontSize(items);
+  const main = items.find((item) =>
+    Math.abs(item.fontSize - representative) <= representative * 0.2
+  );
   return (main ?? items[0]).y;
 }
 
@@ -86,7 +103,6 @@ function assembleLine(items: TextItemBox[]): LineBox {
   let x1 = -Infinity;
   let y0 = Infinity;
   let y1 = -Infinity;
-  let maxFs = 0;
   let boldWeight = 0;
   const cells: LineBox[] = [];
   let cellStart = 0;
@@ -115,7 +131,6 @@ function assembleLine(items: TextItemBox[]): LineBox {
     x1 = Math.max(x1, it.x + it.width);
     y0 = Math.min(y0, it.y - it.fontSize * DESCENT);
     y1 = Math.max(y1, it.y + it.fontSize * ASCENT);
-    maxFs = Math.max(maxFs, it.fontSize);
     if (/bold|black|heavy/i.test(it.fontName)) boldWeight++;
   }
   closeCell(items.length);
@@ -127,7 +142,7 @@ function assembleLine(items: TextItemBox[]): LineBox {
     y1,
     baselineY,
     text: normalizeLineText(text),
-    fontSize: maxFs,
+    fontSize: representativeFontSize(items),
     bold: boldWeight * 2 >= items.length && boldWeight > 0,
     cells: cells.length > 1 ? cells : undefined,
   };
@@ -139,7 +154,6 @@ function makeCell(items: TextItemBox[]): LineBox {
   let x1 = -Infinity;
   let y0 = Infinity;
   let y1 = -Infinity;
-  let maxFs = 0;
   let boldWeight = 0;
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
@@ -154,7 +168,6 @@ function makeCell(items: TextItemBox[]): LineBox {
     x1 = Math.max(x1, it.x + it.width);
     y0 = Math.min(y0, it.y - it.fontSize * DESCENT);
     y1 = Math.max(y1, it.y + it.fontSize * ASCENT);
-    maxFs = Math.max(maxFs, it.fontSize);
     if (/bold|black|heavy/i.test(it.fontName)) boldWeight++;
   }
   return {
@@ -164,7 +177,7 @@ function makeCell(items: TextItemBox[]): LineBox {
     y1,
     baselineY: dominantBaseline(items),
     text: normalizeLineText(text),
-    fontSize: maxFs,
+    fontSize: representativeFontSize(items),
     bold: boldWeight * 2 >= items.length && boldWeight > 0,
   };
 }
@@ -184,49 +197,58 @@ export function detectColumns(
   pageWidth: number,
 ): ColumnRegion[] {
   if (lines.length < 6) return [{ index: 0, x0: 0, x1: pageWidth }];
-  const bins = new Uint8Array(Math.ceil(pageWidth) + 2);
-  for (const l of lines) {
-    const from = Math.max(0, Math.floor(l.x0));
-    const to = Math.min(bins.length - 1, Math.ceil(l.x1));
-    for (let i = from; i <= to; i++) bins[i] = 1;
-  }
-  const gapMin = Math.max(14, pageWidth * 0.04);
-  const gaps: { start: number; end: number }[] = [];
-  let runStart = -1;
-  for (let i = 0; i < bins.length; i++) {
-    if (!bins[i]) {
-      if (runStart < 0) runStart = i;
-    } else {
-      if (runStart >= 0) {
-        if (i - runStart >= gapMin) gaps.push({ start: runStart, end: i });
-        runStart = -1;
-      }
+  // ヘッダー、フッター、タイトルは段をまたぐため、全行の bbox の和集合から
+  // 空白を探すと本文の細い段間まで埋まってしまう。段幅に収まる行だけを使い、
+  // 各 x 座標を横切る行が少なく、左右に十分な行がある位置を段境界とする。
+  const columnFragments = lines.flatMap((line) =>
+    line.cells && line.cells.length > 1 ? line.cells : [line]
+  );
+  const candidates = columnFragments.filter((line) => {
+    const width = line.x1 - line.x0;
+    return width >= pageWidth * 0.08 && width <= pageWidth * 0.62;
+  });
+  const minSideLines = Math.max(3, Math.floor(candidates.length * 0.15));
+  const maxCrossingLines = Math.max(1, Math.floor(candidates.length * 0.12));
+  let best:
+    | { x: number; crossing: number; imbalance: number; centerDistance: number }
+    | undefined;
+  const from = Math.floor(pageWidth * 0.25);
+  const to = Math.ceil(pageWidth * 0.75);
+  for (let x = from; x <= to; x++) {
+    let left = 0;
+    let right = 0;
+    let crossing = 0;
+    for (const line of candidates) {
+      if (line.x1 <= x) left++;
+      else if (line.x0 >= x) right++;
+      else crossing++;
+    }
+    if (
+      left < minSideLines || right < minSideLines ||
+      crossing > maxCrossingLines
+    ) continue;
+    const candidate = {
+      x,
+      crossing,
+      imbalance: Math.abs(left - right),
+      centerDistance: Math.abs(x - pageWidth / 2),
+    };
+    if (
+      !best || candidate.crossing < best.crossing ||
+      (candidate.crossing === best.crossing &&
+        candidate.imbalance < best.imbalance) ||
+      (candidate.crossing === best.crossing &&
+        candidate.imbalance === best.imbalance &&
+        candidate.centerDistance < best.centerDistance)
+    ) {
+      best = candidate;
     }
   }
-  if (gaps.length === 0) return [{ index: 0, x0: 0, x1: pageWidth }];
-  const minLinesPerColumn = Math.max(3, Math.floor(lines.length * 0.15));
-  const regions: ColumnRegion[] = [];
-  let cursor = 0;
-  for (const g of gaps) {
-    regions.push({
-      index: regions.length,
-      x0: cursor,
-      x1: (g.start + g.end) / 2,
-    });
-    cursor = (g.start + g.end) / 2;
-  }
-  regions.push({ index: regions.length, x0: cursor, x1: pageWidth });
-  const counts = new Array(regions.length).fill(0);
-  for (const l of lines) {
-    const mid = (l.x0 + l.x1) / 2;
-    const region = regions.find((r) => mid >= r.x0 && mid <= r.x1) ??
-      regions[regions.length - 1];
-    counts[region.index]++;
-  }
-  const valid = regions.filter((_, i) => counts[i] >= minLinesPerColumn);
-  return valid.length >= 2
-    ? valid.map((r, i) => ({ ...r, index: i }))
-    : [{ index: 0, x0: 0, x1: pageWidth }];
+  if (!best) return [{ index: 0, x0: 0, x1: pageWidth }];
+  return [
+    { index: 0, x0: 0, x1: best.x },
+    { index: 1, x0: best.x, x1: pageWidth },
+  ];
 }
 
 export function groupParagraphs(
@@ -248,19 +270,36 @@ export function groupParagraphs(
     const baselineDelta = prev.baselineY - line.baselineY;
     const overlap = horizontalOverlap(prev, line);
     const narrower = Math.min(prev.x1 - prev.x0, line.x1 - line.x0);
-    const sizeOk = line.fontSize / fs > 0.72 && fs / line.fontSize > 0.72;
+    const sizeOk = Math.min(prev.fontSize, line.fontSize) / fs > 0.72;
     // 分数・数式の破片(非常に小さいフォントの短い断片)を段落に混入させない
-    const prevIsDebris =
-      prev.fontSize < line.fontSize * 0.8 && prev.text.length <= 4;
-    const lineIsDebris =
-      line.fontSize < prev.fontSize * 0.8 && line.text.length <= 4;
+    const prevIsDebris = prev.fontSize < line.fontSize * 0.8 &&
+      prev.text.length <= 4;
+    const lineIsDebris = line.fontSize < prev.fontSize * 0.8 &&
+      line.text.length <= 4;
+    // 通常本文の字下げ、および参考文献のぶら下げインデントを段落境界にする。
+    const prevWidth = prev.x1 - prev.x0;
+    const lineWidth = line.x1 - line.x0;
+    const centerDelta = Math.abs(
+      (prev.x0 + prev.x1) / 2 - (line.x0 + line.x1) / 2,
+    );
+    const centeredContinuation = centerDelta < Math.max(prevWidth, lineWidth) *
+        0.05;
+    const indentStartsParagraph = !centeredContinuation &&
+      line.x0 - prev.x0 > fs * 0.65;
+    const hangingEntryStarts = current.length >= 2 &&
+      prev.x0 - line.x0 > fs * 0.65;
+    const centeredHeadingBeforeBody = prevWidth < lineWidth * 0.6 &&
+      line.x0 < prev.x0 - fs * 3;
     if (
       baselineDelta > 0 &&
       baselineDelta <= fs * 1.85 &&
       overlap > narrower * 0.25 &&
       sizeOk &&
       !prevIsDebris &&
-      !lineIsDebris
+      !lineIsDebris &&
+      !indentStartsParagraph &&
+      !hangingEntryStarts &&
+      !centeredHeadingBeforeBody
     ) {
       current.push(line);
     } else {
@@ -284,6 +323,16 @@ function mergeLineTexts(group: LineBox[]): string {
       text = line.text;
       continue;
     }
+    // 2行にまたがるドロップキャップは抽出順が「IRTUAL...」「Vin...」に
+    // なり得る。大きな字形を含む次行の先頭1文字を前行へ戻す。
+    if (
+      line.y1 - line.y0 > line.fontSize * 2 &&
+      /^[A-Z][a-z]/.test(line.text) &&
+      /^[A-Z]{2,}\b/.test(text)
+    ) {
+      text = line.text[0] + text + " " + line.text.slice(1);
+      continue;
+    }
     const prevEndsWithHyphen = /[\u2010-\u2015-]$/.test(text);
     const nextStartsLower = /^[a-z]/.test(line.text);
     if (prevEndsWithHyphen && nextStartsLower) {
@@ -301,9 +350,10 @@ function isCentered(group: LineBox[]): boolean {
   const minX0 = Math.min(...group.map((l) => l.x0));
   const maxX1 = Math.max(...group.map((l) => l.x1));
   const width = maxX1 - minX0;
-  const fullCount = group.filter((l) =>
-    (l.x0 - minX0) <= width * 0.015 && (maxX1 - l.x1) <= width * 0.015
-  ).length;
+  const fullCount =
+    group.filter((l) =>
+      (l.x0 - minX0) <= width * 0.015 && (maxX1 - l.x1) <= width * 0.015
+    ).length;
   if (fullCount / group.length >= 0.6) return false;
   const centers = group.map((l) => (l.x0 + l.x1) / 2);
   const mean = centers.reduce((a, b) => a + b, 0) / centers.length;
@@ -343,8 +393,7 @@ function makeBlock(
     fontSize,
     bold: group.every((l) => l.bold),
     centered: isCentered(group),
-    kind: group.length === 1 &&
-        (group[0].bold || group[0].fontSize > medianFs * 1.18)
+    kind: group.every((line) => line.bold) || fontSize > medianFs * 1.18
       ? "heading"
       : "body",
   };
@@ -355,10 +404,33 @@ export function analyzePage(page: ExtractedPage): PageLayout {
   const columns = detectColumns(lines, page.width);
   const blocks: Block[] = [];
   const byColumn = new Map<number, LineBox[]>();
+  const gridRows = new Map<number, LineBox[]>();
   for (const col of columns) {
     byColumn.set(col.index, []);
+    gridRows.set(col.index, []);
   }
   for (const line of lines) {
+    if (line.cells && line.cells.length > 1) {
+      const placed = line.cells.map((cell) => {
+        const mid = (cell.x0 + cell.x1) / 2;
+        const region = columns.find((r) => mid >= r.x0 && mid <= r.x1) ??
+          columns[columns.length - 1];
+        return { cell, region };
+      });
+      const occupiedColumns = new Set(placed.map(({ region }) => region.index));
+      if (occupiedColumns.size > 1) {
+        // 同じベースラインに並んだ左右段の本文。表ではないので、それぞれの
+        // 段の通常行へ戻し、前後の行と段落統合する。
+        for (const { cell, region } of placed) {
+          byColumn.get(region.index)?.push(cell);
+        }
+      } else {
+        // 同一段内の著者グリッド・表などはセル単位の独立ブロックにする。
+        const colIndex = placed[0].region.index;
+        gridRows.get(colIndex)?.push(line);
+      }
+      continue;
+    }
     const mid = (line.x0 + line.x1) / 2;
     const region = columns.find((r) => mid >= r.x0 && mid <= r.x1) ??
       columns[columns.length - 1];
@@ -367,22 +439,18 @@ export function analyzePage(page: ExtractedPage): PageLayout {
   const fontSizes = lines.map((l) => l.fontSize).sort((a, b) => a - b);
   const medianFs = fontSizes[Math.floor(fontSizes.length / 2)] ?? 10;
   for (const [colIndex, columnLines] of byColumn) {
-    const plainLines = columnLines.filter(
-      (l) => !l.cells || l.cells.length <= 1,
-    );
-    for (const group of groupParagraphs(plainLines, colIndex)) {
+    for (const group of groupParagraphs(columnLines, colIndex)) {
       const text = mergeLineTexts(group);
       if (text === "") continue;
       blocks.push(makeBlock(group, page, medianFs, colIndex));
     }
     // セル分割された行(著者グリッド・表など)は行内の各セルを独立ブロックにする。
     // 縦方向の段落統合を行うとグリッドが1文に連結されて崩れるため。
-    for (const line of columnLines) {
-      if (!line.cells || line.cells.length <= 1) continue;
+    for (const line of gridRows.get(colIndex) ?? []) {
       // 行全体が数式 look の場合(例: Attention(Q,K,V) = softmax(...) (1))は
       // セル単位で翻訳すると数式が崩れるため、全セルを原文保持にする。
       const formulaLine = looksLikeFormula(line.text);
-      for (const cell of line.cells) {
+      for (const cell of line.cells ?? []) {
         if (cell.text === "") continue;
         const block = makeBlock([cell], page, medianFs, colIndex);
         block.centered = false;
