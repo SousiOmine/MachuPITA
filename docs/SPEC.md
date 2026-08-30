@@ -132,7 +132,7 @@ MachuPITA/
 - 実行は完全に CLI プロセス内。APIキー・トークンは端末に露出しない(入力はマスク表示)。
 - `Models` コレクションに必要なプロバイダのみ登録(バンドルサイズ最適化のため個別ファクトリ import)。
 - 対応プロバイダ(v1):
-  - APIキー型: OpenAI, Anthropic, Google, OpenRouter, xAI, Mistral, Groq, DeepSeek, Azure OpenAI, Amazon Bedrock ほか
+  - APIキー型: OpenAI, Anthropic, Google, OpenRouter, xAI, Mistral, Groq, DeepSeek, DeepInfra, Azure OpenAI, Amazon Bedrock ほか
   - OAuth型(サブスク利用): **OpenAI Codex(ChatGPT Plus/Pro)**, GitHub Copilot
   - カスタム: OpenAI互換エンドポイント(baseUrl + key)で Ollama / LM Studio / vLLM 等に接続(CLI v1 では APIキー型プロバイダとして auth.json に保存)
 - 認証フロー (cli/auth-screen.tsx):

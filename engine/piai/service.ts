@@ -7,6 +7,7 @@ import type {
   Model,
   Models,
 } from "@earendil-works/pi-ai";
+import { deepinfraProvider } from "./deepinfra.ts";
 import { FileCredentialStore } from "./store.ts";
 
 export interface LoginUiState {
@@ -34,7 +35,9 @@ export class PiaiService {
 
   models(): Models {
     if (!this.#models) {
-      this.#models = builtinModels({ credentials: this.#store });
+      const models = builtinModels({ credentials: this.#store });
+      models.setProvider(deepinfraProvider());
+      this.#models = models;
     }
     return this.#models;
   }
