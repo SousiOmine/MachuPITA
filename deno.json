@@ -23,7 +23,7 @@
   },
   "tasks": {
     "cli": "deno run -A main.ts",
-    "install:global": "deno install -g -A -c deno.json -n machupita main.ts",
+    "install:global": "deno install -g -f -A -c deno.json -n machupita main.ts",
     "check": "deno check main.ts engine/ cli/ tests/ tools/",
     "test": "deno test -A",
     "setup:fonts": "deno run -A tools/get-fonts.ts",
