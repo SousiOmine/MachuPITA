@@ -8,6 +8,7 @@ import { buildSummary, resolveModelMode } from "./translate.ts";
 import type { TranslateRequest } from "./translate.ts";
 import { JobManager } from "../engine/jobs.ts";
 import type { JobOptionsPayload } from "../engine/jobs.ts";
+import { ensureFonts } from "../engine/fonts.ts";
 import { PiaiService } from "../engine/piai/service.ts";
 import { resolveAppPaths, SettingsStore } from "../engine/settings.ts";
 import type { Settings } from "../engine/settings.ts";
@@ -173,6 +174,27 @@ export function buildOptions(
   };
 }
 
+// 埋め込みフォントが未取得なら初回のみ自動ダウンロードする。
+// 失敗しても進行は止めず、翻訳時に engine 側のエラーメッセージに任せる。
+async function ensureFontsAvailable(fontsDir: string): Promise<void> {
+  try {
+    const downloaded = await ensureFonts(fontsDir);
+    if (downloaded.length > 0) {
+      console.log(
+        `フォントをダウンロードしました: ${
+          downloaded.map((t) => t.out).join(", ")
+        }`,
+      );
+    }
+  } catch (err) {
+    console.error(
+      `警告: フォントの自動ダウンロードに失敗しました (${
+        err instanceof Error ? err.message : String(err)
+      })。\n翻訳の前に deno task setup:fonts を実行してください。`,
+    );
+  }
+}
+
 export async function runCli(argv: string[]): Promise<void> {
   const args = parseArgs(argv);
   if (args.command === "help") {
@@ -182,6 +204,7 @@ export async function runCli(argv: string[]): Promise<void> {
 
   const paths = resolveAppPaths();
   await Deno.mkdir(paths.dataDir, { recursive: true });
+  await ensureFontsAvailable(paths.fontsDir);
   const ctx: AppCtx = {
     settings: new SettingsStore(paths),
     piai: new PiaiService(paths.dataDir),

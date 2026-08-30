@@ -18,10 +18,26 @@ Deno + [@deno-ink/core](https://jsr.io/@deno-ink/core)(React for CLI) による�
 deno install
 
 # 埋め込み用フォント(Noto Sans / Noto Sans JP)のダウンロード
+# 初回起動時に自動実行されるため通常は不要(手動更新したい場合のみ実行)
 deno task setup:fonts
 ```
 
+## インストール (グローバルコマンド)
+
+Deno が入っていれば、リポジトリ直下で1コマンドで `machupita` をグローバル登録できます:
+
+```powershell
+deno task install:global   # = deno install -g -A -c deno.json -n machupita main.ts
+machupita --help           # どこからでも実行可能
+```
+
+- 初回起動時に埋め込みフォントが自動ダウンロードされます(失敗時は `deno task setup:fonts` を実行)
+- インストール先は `~/.deno/bin`(Windows: `%USERPROFILE%\.deno\bin`)。PATH に無い場合は追加してください
+- 解除は `deno uninstall -g machupita`。設定ファイルを変更した場合は再インストールしてください
+
 ## 実行
+
+グローバルインストール済みなら、以下の `deno task cli ...` は `machupita ...` に置き換えられます。
 
 ```powershell
 deno task cli                # 対話メニュー (翻訳 / 認証 / モデル選択 / 設定)

@@ -4,6 +4,9 @@
   "name": "machupita",
   "version": "0.1.0",
   "exports": "./main.ts",
+  "bin": {
+    "machupita": "./main.ts"
+  },
   "compilerOptions": {
     "jsx": "react-jsx",
     "jsxImportSource": "react",
@@ -20,6 +23,7 @@
   },
   "tasks": {
     "cli": "deno run -A main.ts",
+    "install:global": "deno install -g -A -c deno.json -n machupita main.ts",
     "check": "deno check main.ts engine/ cli/ tests/ tools/",
     "test": "deno test -A",
     "setup:fonts": "deno run -A tools/get-fonts.ts",
