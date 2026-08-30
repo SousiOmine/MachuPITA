@@ -1,6 +1,13 @@
 import type { Api, Model, Models, TextContent } from "@earendil-works/pi-ai";
 import type { Block, TokenUsageTotals } from "./types.ts";
 import { protectPlaceholders, restorePlaceholders } from "./classify.ts";
+import {
+  type GlossaryCall,
+  type GlossaryEntry,
+  appendGlossary,
+  buildGlossarySystemPrompt,
+  extractGlossary,
+} from "./glossary.ts";
 
 export interface TranslateJobOptions {
   targetLanguage: string;
@@ -24,6 +31,10 @@ export interface Translator {
     signal: AbortSignal,
   ): Promise<BatchResult[]>;
   usage(): TokenUsageTotals;
+  /** 文書全体の用語集を抽出する(対応する実装のみ)。 */
+  extractGlossary?(texts: string[], signal: AbortSignal): Promise<GlossaryEntry[]>;
+  /** 用語集を反映した新しい Translator を返す(対応する実装のみ)。 */
+  withGlossary?(entries: GlossaryEntry[]): Translator;
 }
 export function buildSystemPrompt(targetLanguage: string): string {
   return [
@@ -35,6 +46,10 @@ export function buildSystemPrompt(targetLanguage: string): string {
     "3. Do not add explanations, notes, greetings, or trailing punctuation that is not in the source.",
     "4. Keep numbers, units, and proper nouns accurate. Keep line breaks out; return a single string per item.",
     "5. Every input id must appear exactly once in the output array.",
+    "6. Keep the same English term rendered identically everywhere in the document. Never give the same source term different translations in different items.",
+    "7. Coined terms, method names, product names, and proper nouns without an established translation must stay in English; never invent a translation for them.",
+    "8. On the first occurrence of such a kept English term in an item, you may append the English in parentheses after the translation, like 訳語 (Original Term); afterwards use the translation alone.",
+    "9. A glossary may be appended to this prompt. Glossary entries override rules 6-8 and are binding.",
   ].join("\n");
 }
 
@@ -49,14 +64,18 @@ export class PiTranslator implements Translator {
     costTotal: 0,
   };
 
+  #targetLanguage: string;
+
   constructor(
     models: Models,
     model: Model<Api>,
     systemPrompt: string,
+    targetLanguage = "",
   ) {
     this.#models = models;
     this.#model = model;
     this.#systemPrompt = systemPrompt;
+    this.#targetLanguage = targetLanguage;
   }
 
   usage(): TokenUsageTotals {
@@ -105,6 +124,68 @@ export class PiTranslator implements Translator {
       .map((c) => c.text)
       .join("");
     return parseBatchResponse(text, items);
+  }
+
+  #complete(
+    systemPrompt: string,
+    userText: string,
+    signal: AbortSignal,
+  ): Promise<string> {
+    return this.#models.completeSimple(
+      this.#model,
+      {
+        systemPrompt,
+        messages: [
+          { role: "user", content: userText, timestamp: Date.now() },
+        ],
+      },
+      {
+        temperature: 0,
+        maxTokens: Math.max(2048, userText.length * 2),
+        signal,
+      },
+    ).then((message) => {
+      const u = message.usage;
+      if (u) {
+        this.#totals.input += u.input ?? 0;
+        this.#totals.output += u.output ?? 0;
+        this.#totals.total += u.totalTokens ?? 0;
+        this.#totals.costTotal += u.cost?.total ?? 0;
+      }
+      if (message.stopReason === "aborted") {
+        throw new DOMException("aborted", "AbortError");
+      }
+      if (message.stopReason === "error") {
+        throw new Error(message.errorMessage ?? "LLM request failed");
+      }
+      return message.content
+        .filter((c): c is TextContent => c.type === "text")
+        .map((c) => c.text)
+        .join("");
+    });
+  }
+
+  extractGlossary(
+    texts: string[],
+    signal: AbortSignal,
+  ): Promise<GlossaryEntry[]> {
+    const call: GlossaryCall = (system, user, sig) =>
+      this.#complete(system, user, sig);
+    return extractGlossary(
+      call,
+      texts,
+      buildGlossarySystemPrompt(this.#targetLanguage),
+      signal,
+    );
+  }
+
+  withGlossary(entries: GlossaryEntry[]): Translator {
+    return new PiTranslator(
+      this.#models,
+      this.#model,
+      appendGlossary(this.#systemPrompt, entries),
+      this.#targetLanguage,
+    );
   }
 }
 

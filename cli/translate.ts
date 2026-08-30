@@ -83,6 +83,10 @@ export function startTranslate(
     request.bytes,
     request.options,
     async (job, signal, emit) => {
+      const targetLanguage = resolveTargetLanguageLabel(
+        request.options.targetLanguage,
+        request.options.targetLanguageFree,
+      );
       await runPipeline(
         await Deno.makeTempDir({ prefix: "machupita-job-" }),
         job,
@@ -93,12 +97,8 @@ export function startTranslate(
             mode.kind === "faux" ? new FauxEchoTranslator() : new PiTranslator(
               ctx.piai.models(),
               mode.model,
-              buildSystemPrompt(
-                resolveTargetLanguageLabel(
-                  request.options.targetLanguage,
-                  request.options.targetLanguageFree,
-                ),
-              ),
+              buildSystemPrompt(targetLanguage),
+              targetLanguage,
             ),
           ),
       );

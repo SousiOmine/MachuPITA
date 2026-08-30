@@ -7,8 +7,12 @@ import {
   translateBlocks,
   type Translator,
 } from "./core/translate.ts";
+import {
+  type GlossaryEntry,
+  collectGlossaryTexts,
+} from "./core/glossary.ts";
 import { buildDualPdf, renderTranslatedPdf } from "./core/render.ts";
-import type { PageLayout, TokenUsageTotals } from "./core/types.ts";
+import type { Block, PageLayout, TokenUsageTotals } from "./core/types.ts";
 import { LANGUAGE_PRESETS } from "./settings.ts";
 import type { OutputFormat } from "./settings.ts";
 
@@ -16,6 +20,7 @@ export type JobStage =
   | "queued"
   | "extracting"
   | "analyzing"
+  | "glossary"
   | "translating"
   | "rendering"
   | "done"
@@ -41,6 +46,8 @@ export interface JobSnapshot {
   blocksTotal: number;
   blocksTranslated: number;
   blocksFailed: number;
+  /** 文書から抽出された用語集のエントリ数(非対応 Translator は 0) */
+  glossarySize: number;
   usage: TokenUsageTotals;
   warnings: string[];
   error?: string;
@@ -124,6 +131,7 @@ export class JobManager {
         blocksTotal: 0,
         blocksTranslated: 0,
         blocksFailed: 0,
+        glossarySize: 0,
         usage: emptyUsage(),
         warnings: [],
         createdAt: Date.now(),
@@ -272,8 +280,20 @@ export async function runPipeline(
     },
   });
 
+  setStage("glossary");
+  const baseTranslator = await createTranslator();
+  const { translator, glossary } = await withDocumentGlossary(
+    baseTranslator,
+    translatable,
+    signal,
+    (warning) => {
+      job.snapshot.warnings.push(warning);
+      emit({ type: "warning", payload: warning });
+    },
+  );
+  job.snapshot.glossarySize = glossary.length;
+
   setStage("translating");
-  const translator = await createTranslator();
   await translateBlocks(
     translatable,
     translator,
@@ -328,6 +348,9 @@ export async function runPipeline(
       job.options.targetLanguageFree,
     ),
     generatedAt: new Date().toISOString(),
+    glossary: glossary.length > 0
+      ? glossary.map((e) => ({ source: e.source, target: e.target }))
+      : undefined,
     pages: job.layouts.map((layout) => ({
       pageNumber: layout.pageNumber,
       width: layout.width,
@@ -369,6 +392,32 @@ export async function runPipeline(
 
 function throwIfAborted(signal: AbortSignal): void {
   if (signal.aborted) throw new DOMException("aborted", "AbortError");
+}
+
+/**
+ * 文書から用語集を抽出し、Translator に反映する。
+ * 用語抽出に対応しない Translator や抽出失敗時は、翻訳を止めずそのまま続行する。
+ */
+export async function withDocumentGlossary(
+  translator: Translator,
+  blocks: Block[],
+  signal: AbortSignal,
+  warn: (message: string) => void,
+): Promise<{ translator: Translator; glossary: GlossaryEntry[] }> {
+  if (!translator.extractGlossary || !translator.withGlossary) {
+    return { translator, glossary: [] };
+  }
+  const texts = collectGlossaryTexts(blocks);
+  if (texts.length === 0) return { translator, glossary: [] };
+  try {
+    const glossary = await translator.extractGlossary(texts, signal);
+    if (glossary.length === 0) return { translator, glossary: [] };
+    return { translator: translator.withGlossary(glossary), glossary };
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") throw err;
+    warn("用語集の抽出に失敗したためグロッサリなしで翻訳を続行します");
+    return { translator, glossary: [] };
+  }
 }
 
 export function buildPromptFor(options: JobOptionsPayload): string {

@@ -221,6 +221,7 @@ const STAGE_LABEL: Record<string, string> = {
   queued: "待機中",
   extracting: "テキスト抽出中",
   analyzing: "レイアウト解析中",
+  glossary: "用語集抽出中",
   translating: "翻訳中",
   rendering: "描画中",
   done: "完了",
