@@ -9,7 +9,7 @@ import {
   useInput,
 } from "@deno-ink/core";
 import type { SelectInputItem } from "@deno-ink/core";
-import type { Api, AuthEvent, AuthPrompt, Model } from "@earendil-works/pi-ai";
+import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
 import type { AppCtx } from "./context.ts";
 
 interface ProviderRow {
@@ -21,7 +21,7 @@ interface ProviderRow {
   source?: string;
 }
 
-type View = "list" | "actions" | "api-key" | "oauth" | "model";
+type View = "list" | "actions" | "api-key" | "oauth";
 
 /** プロバイダ絞り込み: 名前またはIDの部分一致 (大文字小文字を無視)。 */
 export function matchesProviderFilter(
@@ -35,6 +35,9 @@ export function matchesProviderFilter(
     provider.id.toLowerCase().includes(q)
   );
 }
+
+/** プロバイダ一覧の表示行数上限 (超過分はスクロールで表示)。 */
+const PROVIDER_LIST_LIMIT = 10;
 
 /** プロバイダ一覧の表示項目 (絞り込み済みリスト + 「← 戻る」)。 */
 export function buildProviderItems(
@@ -65,7 +68,6 @@ export function AuthScreen({
   const [providers, setProviders] = useState<ProviderRow[]>([]);
   const [view, setView] = useState<View>("list");
   const [providerId, setProviderId] = useState<string | null>(null);
-  const [models, setModels] = useState<Model<Api>[]>([]);
   const [apiKeyDraft, setApiKeyDraft] = useState("");
   const [promptAnswer, setPromptAnswer] = useState("");
   const [notice, setNotice] = useState("");
@@ -89,10 +91,6 @@ export function AuthScreen({
     );
   }, [ctx]);
 
-  const reloadModels = useCallback(async (pid: string) => {
-    setModels(await ctx.piai.listModels(pid));
-  }, [ctx]);
-
   useEffect(() => {
     void reload();
   }, [reload]);
@@ -104,13 +102,16 @@ export function AuthScreen({
     return () => clearInterval(t);
   }, [view, providerId]);
 
-  // ログイン完了 → モデル選択へ / 失敗 → アクション一覧へ
+  // ログイン完了 → アクション一覧へ / 失敗 → アクション一覧へ
   useEffect(() => {
     if (view !== "oauth" || !providerId) return;
     const st = ctx.piai.getLoginState(providerId);
     if (st?.phase === "done") {
-      void reloadModels(providerId);
-      setView("model");
+      void reload();
+      setNotice(
+        "認証が完了しました。モデルはメニューの「モデル選択」から選べます",
+      );
+      setView("actions");
     } else if (st?.phase === "error") {
       setNotice(st.error ?? "ログインに失敗しました");
       setView("actions");
@@ -130,7 +131,7 @@ export function AuthScreen({
       }
       return;
     }
-    if (view === "api-key" || view === "model") {
+    if (view === "api-key") {
       if (key.escape) setView("actions");
       return;
     }
@@ -207,9 +208,25 @@ export function AuthScreen({
 
   if (view === "list") {
     const items = buildProviderItems(providers, filterQuery);
+    // 選択項目を中央に保つように表示範囲を決める (一覧が縦に伸びないよう上限で切る)
+    const sel = Math.min(listIndex, Math.max(0, items.length - 1));
+    const maxOffset = Math.max(0, items.length - PROVIDER_LIST_LIMIT);
+    const scrollOffset = Math.min(
+      maxOffset,
+      Math.max(0, sel - Math.floor((PROVIDER_LIST_LIMIT - 1) / 2)),
+    );
+    const visible = items.slice(
+      scrollOffset,
+      scrollOffset + PROVIDER_LIST_LIMIT,
+    );
+    const hasMoreUp = scrollOffset > 0;
+    const hasMoreDown = scrollOffset + PROVIDER_LIST_LIMIT < items.length;
+    const providerCount = filterQuery
+      ? providers.filter((p) => matchesProviderFilter(p, filterQuery)).length
+      : providers.length;
     return (
       <Box flexDirection="column">
-        <Text bold>プロバイダを選択</Text>
+        <Text bold>プロバイダを選択 ({providerCount} 件)</Text>
         <Box flexDirection="row">
           <Text color="cyan" bold>検索:</Text>
           {filterQuery
@@ -219,8 +236,9 @@ export function AuthScreen({
         {items.length === 1 && filterQuery && (
           <Text dimColor>該当するプロバイダがありません。</Text>
         )}
-        {items.map((item, i) => {
-          const isSelected = i === listIndex;
+        {hasMoreUp && <Text dimColor>...</Text>}
+        {visible.map((item, i) => {
+          const isSelected = scrollOffset + i === sel;
           return (
             <Box key={item.value} flexDirection="row">
               <Box marginRight={1}>
@@ -234,6 +252,7 @@ export function AuthScreen({
             </Box>
           );
         })}
+        {hasMoreDown && <Text dimColor>...</Text>}
         <Text dimColor>
           文字入力で絞り込み / ↑↓ 選択 / Enter 決定 / Backspace 編集 / Esc
           解除・戻る
@@ -264,7 +283,9 @@ export function AuthScreen({
             await ctx.piai.saveApiKey(selected.id, key);
             await reload();
             setApiKeyDraft("");
-            setNotice("APIキーを保存しました");
+            setNotice(
+              "APIキーを保存しました。モデルはメニューの「モデル選択」から選べます",
+            );
             setView("actions");
           }}
         />
@@ -294,41 +315,6 @@ export function AuthScreen({
     );
   }
 
-  if (view === "model") {
-    if (models.length === 0) {
-      return (
-        <Box flexDirection="column">
-          <Text bold>{selected.name} のモデル</Text>
-          <Text dimColor>
-            モデルが見つかりません。プロバイダのカタログを確認してください。
-          </Text>
-          <Text dimColor>Esc で戻る</Text>
-        </Box>
-      );
-    }
-    const items: SelectInputItem<string>[] = models.map((m) => ({
-      label: m.name || m.id,
-      value: m.id,
-    }));
-    return (
-      <Box flexDirection="column">
-        <Text bold>{selected.name} のモデルを選択</Text>
-        <SelectInput
-          items={items}
-          onSelect={async (item) => {
-            await ctx.settings.update({
-              provider: selected.id,
-              model: item.value,
-            });
-            setNotice(`モデルを選択しました: ${item.value}`);
-            setView("actions");
-          }}
-        />
-        <Text dimColor>Esc で戻る</Text>
-      </Box>
-    );
-  }
-
   const actions: SelectInputItem<string>[] = [];
   if (selected.authType === "api_key") {
     actions.push({ label: "APIキーを入力", value: "key" });
@@ -337,7 +323,6 @@ export function AuthScreen({
     actions.push({ label: "OAuth ログイン", value: "oauth" });
   }
   if (selected.configured) {
-    actions.push({ label: "モデルを選択", value: "model" });
     actions.push({ label: "認証を解除", value: "logout" });
   }
   actions.push({ label: "← 戻る", value: "back" });
@@ -370,11 +355,6 @@ export function AuthScreen({
               setNotice("");
               ctx.piai.startLogin(selected.id);
               setView("oauth");
-              break;
-            case "model":
-              setNotice("");
-              void reloadModels(selected.id);
-              setView("model");
               break;
             case "logout":
               void ctx.piai.logout(selected.id).then(async () => {

@@ -24,8 +24,9 @@ deno task setup:fonts
 ## 実行
 
 ```powershell
-deno task cli                # 対話メニュー (翻訳 / 認証 / 設定)
-deno task cli auth           # プロバイダ認証・モデル選択
+deno task cli                # 対話メニュー (翻訳 / 認証 / モデル選択 / 設定)
+deno task cli auth           # プロバイダ認証 (APIキー入力 / OAuth ログイン / 解除)
+deno task cli model          # モデル選択 (認証済みプロバイダから選択)
 deno task cli settings       # 既定設定の表示・変更
 deno task cli <PDF>          # PDF翻訳を直接実行 (既定設定を使用)
 deno task cli --help         # ヘルプ表示
@@ -64,9 +65,10 @@ deno task cli paper.pdf --lang en --format dual --out-dir out
 
 ## 使い方
 
-1. `auth` でプロバイダを接続(APIキー入力、または ChatGPTサブスク/OpenAI Codex・GitHub Copilot の OAuth ログイン)し、モデルを選択
-2. PDFパスを指定して翻訳を実行(進捗は画面に表示)
-3. 完了後、出力ディレクトリから翻訳PDFを取得
+1. `auth` でプロバイダを接続(APIキー入力、または ChatGPTサブスク/OpenAI Codex・GitHub Copilot の OAuth ログイン)
+2. `model` で認証済みプロバイダからモデルを選択
+3. PDFパスを指定して翻訳を実行(進捗は画面に表示)
+4. 完了後、出力ディレクトリから翻訳PDFを取得
 
 ## テスト
 

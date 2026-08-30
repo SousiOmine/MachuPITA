@@ -29,7 +29,7 @@
 
 ### 2.1 実行モード
 
-- **対話モード**: `deno task cli` でメニューを表示し、翻訳 / 認証 / 設定を画面遷移で操作する。
+- **対話モード**: `deno task cli` でメニューを表示し、翻訳 / 認証 / モデル選択 / 設定を画面遷移で操作する。
 - **バッチモード**: `deno task cli <PDF> [options]` でPDFパスを引数に直接実行し、完了後に成果物サマリを出力して終了する(終了コード: 成功0 / エラー・中止1 / 引数エラー2)。サブコマンドは持たず、PDFパスが第一引数の場合に翻訳を実行する。
 - **認証フロー**: OAuth等の対話入力を必要とする場合のみ CLI 上でプロンプト(テキスト入力・選択肢)を出し、それ以外は非対話で完結する。
 
@@ -52,7 +52,8 @@ MachuPITA/
 ├─ cli/               # CLI UI (@deno-ink/core)
 │  ├─ run.ts          # 引数解析・コンテキスト作成・render マウント
 │  ├─ app.tsx         # 画面ルーティング (メニュー)
-│  ├─ auth-screen.tsx     # プロバイダ認証・モデル選択
+│  ├─ auth-screen.tsx     # プロバイダ認証 (APIキー/OAuth/解除)
+│  ├─ model-screen.tsx    # モデル選択 (認証済みプロバイダのみ)
 │  ├─ settings-screen.tsx # 既定設定の変更
 │  ├─ translate-screen.tsx# 翻訳ウィザード・進捗表示
 │  ├─ translate.ts    # 翻訳ドライバ (ジョブ開始/成果物コピー)
@@ -134,17 +135,18 @@ MachuPITA/
   - カスタム: OpenAI互換エンドポイント(baseUrl + key)で Ollama / LM Studio / vLLM 等に接続(CLI v1 では APIキー型プロバイダとして auth.json に保存)
 - 認証フロー (cli/auth-screen.tsx):
   - 一覧: `auth` 画面に全プロバイダを認証方式・接続状態つきで表示。
-  - APIキー型: マスク付き TextInput で入力 → `FileCredentialStore`(pi-ai の CredentialStore 互換形式、auth.json)に保存。入力後にモデル選択へ進む。
-  - OAuth型: `PiaiService.startLogin` でブラウザ/デバイスコードフローを起動。イベント(認証URL・デバイスコード・進捗)を画面上に表示し、プロンプト(text / secret / select / manual_code)を TextInput / SelectInput で応答。ログイン完了後はモデル選択へ自動遷移。トークンは自動リフレッシュ。
+  - APIキー型: マスク付き TextInput で入力 → `FileCredentialStore`(pi-ai の CredentialStore 互換形式、auth.json)に保存。
+  - OAuth型: `PiaiService.startLogin` でブラウザ/デバイスコードフローを起動。イベント(認証URL・デバイスコード・進捗)を画面上に表示し、プロンプト(text / secret / select / manual_code)を TextInput / SelectInput で応答。ログイン完了後はアクション一覧へ戻る(モデル選択は `model` 画面で実施)。トークンは自動リフレッシュ。
   - 解除: 一覧の「認証を解除」で `logout`。状態は `listAuthStatuses` で確認。
-- モデル一覧は pi-ai のレジストリ(`getModels` 相当)からプロバイダ毎に取得し、SelectInput で選択 → settings.json の `provider` / `model` に保存。
+- モデル選択フロー (cli/model-screen.tsx): `model` 画面は **認証済みプロバイダのみ**を一覧表示(未認証は案内のみ)。プロバイダ選択 → pi-ai のレジストリ(`getModels` 相当)からモデル一覧を取得し、SelectInput で選択 → settings.json の `provider` / `model` に保存。現在の設定値には「(使用中)」マークを付ける。
 
 ## 5. CLIインターフェース設計
 
 | コマンド | 内容 |
 |---|---|
-| `machupita` (引数なし) | 対話メニュー(翻訳 / 認証 / 設定)を @deno-ink/core で表示 |
-| `machupita auth` | プロバイダ認証・モデル選択画面を直接開く |
+| `machupita` (引数なし) | 対話メニュー(翻訳 / 認証 / モデル選択 / 設定)を @deno-ink/core で表示 |
+| `machupita auth` | プロバイダ認証画面を直接開く |
+| `machupita model` | モデル選択画面(認証済みプロバイダのみ)を直接開く |
 | `machupita settings` | 既定設定(言語/出力形式/同時実行数/バッチ予算/マスク色/フォント縮小下限)を変更 |
 | `machupita <PDF> [options]` | PDF翻訳を実行(非対話で完結可能。未指定の設定は既定値を利用) |
 | `machupita --help` | ヘルプ表示 |
@@ -174,11 +176,12 @@ MachuPITA/
 
 ### 6.1 画面一覧
 
-1. **メニュー**: 翻訳を実行 / プロバイダ認証・モデル選択 / 設定 / 終了。
+1. **メニュー**: 翻訳を実行 / プロバイダ認証 / モデル選択 / 設定 / 終了。
 2. **翻訳ウィザード**: PDFパス入力 → 翻訳先言語(プリセット+自由記述) → 出力形式(翻訳のみ/交互バイリンガル) → 実行内容の確認 → 進行画面。
 3. **進行画面**: ステージ表示(解析→翻訳→描画)、頁単位 ProgressBar、段落カウント(失敗数含む)、累計 token / コスト表示、警告一覧、`q` キーで中止。完了後は成果物パスを表示してメニューへ戻る(バッチモードではサマリを出力して終了)。
-4. **認証画面**: プロバイダ一覧(認証方式・接続状態バッジ)。一覧上部の入力欄に文字を打つと名前/IDの部分一致で即時絞り込み(Backspace で編集、Esc で解除)。選択後は個別アクション(APIキー入力 / OAuthログイン / モデル選択 / 認証解除)→ OAuth 中はイベント表示+プロンプト応答 → 完了後モデル選択。
-5. **設定画面**: 翻訳先言語 / 出力形式 / 同時実行数 / バッチ予算 / マスク色 / フォント縮小下限を編集し保存。
+4. **認証画面**: プロバイダ一覧(認証方式・接続状態バッジ)。一覧上部の入力欄に文字を打つと名前/IDの部分一致で即時絞り込み(Backspace で編集、Esc で解除)。選択後は個別アクション(APIキー入力 / OAuthログイン / 認証解除)→ OAuth 中はイベント表示+プロンプト応答。認証の完了・解除の状態はその場で反映される。
+5. **モデル選択画面**: 認証済みプロバイダのみを一覧表示(未認証の場合は案内を表示)。プロバイダ選択 → モデル一覧(現在の設定値には「(使用中)」マーク)→ 選択で settings.json に保存してプロバイダ一覧へ戻る。
+6. **設定画面**: 翻訳先言語 / 出力形式 / 同時実行数 / バッチ予算 / マスク色 / フォント縮小下限を編集し保存。
 
 主要コンポーネント: Box / Text / TextInput / SelectInput / ProgressBar / Spinner / Badge。
 

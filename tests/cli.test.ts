@@ -5,6 +5,7 @@ import {
   buildProviderItems,
   matchesProviderFilter,
 } from "../cli/auth-screen.tsx";
+import { buildModelProviderItems } from "../cli/model-screen.tsx";
 import { PROJECT_ROOT } from "../engine/settings.ts";
 import { createFixturePdf } from "./helpers.ts";
 
@@ -58,6 +59,21 @@ Deno.test("provider list: 絞り込み結果の先頭が検索候補になり、
   );
 });
 
+Deno.test("model list: 使用中プロバイダにマークが付き、戻るは末尾", () => {
+  const providers = [
+    { id: "anthropic", name: "Anthropic" },
+    { id: "openai", name: "OpenAI" },
+  ];
+  assertEquals(
+    buildModelProviderItems(providers, "openai").map((i) => i.label),
+    ["Anthropic", "OpenAI (使用中)", "← 戻る"],
+  );
+  assertEquals(
+    buildModelProviderItems(providers, "").map((i) => i.label),
+    ["Anthropic", "OpenAI", "← 戻る"],
+  );
+});
+
 Deno.test("parseArgs: PDFパスとフラグを解釈する", () => {
   const args = parseArgs([
     "paper.pdf",
@@ -84,10 +100,11 @@ Deno.test("parseArgs: PDFパスとフラグを解釈する", () => {
   assertEquals(args.flags.original, true);
 });
 
-Deno.test("parseArgs: 引数なしはメニュー、help/auth/settings を振り分ける", () => {
+Deno.test("parseArgs: 引数なしはメニュー、help/auth/model/settings を振り分ける", () => {
   assertEquals(parseArgs([]).command, "menu");
   assertEquals(parseArgs(["--help"]).command, "help");
   assertEquals(parseArgs(["auth"]).command, "auth");
+  assertEquals(parseArgs(["model"]).command, "model");
   assertEquals(parseArgs(["settings"]).command, "settings");
 });
 

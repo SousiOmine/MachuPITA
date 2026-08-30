@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Box, SelectInput, Text, useApp } from "@deno-ink/core";
 import type { SelectInputItem } from "@deno-ink/core";
 import { AuthScreen } from "./auth-screen.tsx";
+import { ModelScreen } from "./model-screen.tsx";
 import { SettingsScreen } from "./settings-screen.tsx";
 import { ProgressScreen, TranslateSetupScreen } from "./translate-screen.tsx";
 import type { AppCtx } from "./context.ts";
@@ -14,6 +15,7 @@ import type {
 export type Screen =
   | { kind: "menu" }
   | { kind: "auth" }
+  | { kind: "model" }
   | { kind: "settings" }
   | { kind: "translate-setup"; initialFile?: string }
   | { kind: "progress"; request: TranslateRequest; mode: TranslatorMode };
@@ -46,6 +48,12 @@ export function App({ ctx, initial, autoExit, outcome }: AppProps) {
           onBack={() => go({ kind: "menu" })}
         />
       )}
+      {screen.kind === "model" && (
+        <ModelScreen
+          ctx={ctx}
+          onBack={() => go({ kind: "menu" })}
+        />
+      )}
       {screen.kind === "settings" && (
         <SettingsScreen
           ctx={ctx}
@@ -74,7 +82,7 @@ export function App({ ctx, initial, autoExit, outcome }: AppProps) {
   );
 }
 
-type MenuValue = "translate" | "auth" | "settings" | "quit";
+type MenuValue = "translate" | "auth" | "model" | "settings" | "quit";
 
 function MenuScreen({
   onNavigate,
@@ -84,7 +92,8 @@ function MenuScreen({
   const { exit } = useApp();
   const items: SelectInputItem<MenuValue>[] = [
     { label: "翻訳を実行", value: "translate" },
-    { label: "プロバイダ認証・モデル選択", value: "auth" },
+    { label: "プロバイダ認証", value: "auth" },
+    { label: "モデル選択", value: "model" },
     { label: "設定", value: "settings" },
     { label: "終了", value: "quit" },
   ];

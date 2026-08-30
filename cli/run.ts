@@ -29,7 +29,7 @@ export interface TranslateCliFlags {
   original?: boolean;
 }
 
-export type CliCommand = "menu" | "auth" | "settings" | "help";
+export type CliCommand = "menu" | "auth" | "model" | "settings" | "help";
 
 export interface CliArgs {
   command: CliCommand;
@@ -51,6 +51,9 @@ export function parseArgs(argv: string[]): CliArgs {
         break;
       case "auth":
         command = "auth";
+        break;
+      case "model":
+        command = "model";
         break;
       case "settings":
         command = "settings";
@@ -124,8 +127,9 @@ export function parseArgs(argv: string[]): CliArgs {
 export const HELP_TEXT = `MachuPITA — 論文PDFをレイアウトを保ったまま翻訳するCLI
 
 使い方:
-  machupita                      対話メニュー (翻訳 / 認証 / 設定)
-  machupita auth                 プロバイダ認証・モデル選択
+  machupita                      対話メニュー (翻訳 / 認証 / モデル選択 / 設定)
+  machupita auth                 プロバイダ認証 (APIキー入力 / OAuth ログイン / 解除)
+  machupita model                モデル選択 (認証済みプロバイダから選択)
   machupita settings             既定設定の表示・変更
   machupita <PDF> [options]      PDF翻訳を実行 (未指定の設定は既定値を使用)
   machupita --help               このヘルプを表示
@@ -193,6 +197,8 @@ export async function runCli(argv: string[]): Promise<void> {
 
   if (args.command === "auth") {
     initial = { kind: "auth" };
+  } else if (args.command === "model") {
+    initial = { kind: "model" };
   } else if (args.command === "settings") {
     initial = { kind: "settings" };
   } else if (args.flags.file) {
