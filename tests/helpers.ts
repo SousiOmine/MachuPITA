@@ -1,5 +1,4 @@
 import { PDFDocument, rgb, StandardFonts } from "@cantoo/pdf-lib";
-import type { ExtractedPage, TextItemBox } from "../engine/core/types.ts";
 
 export interface FixtureLine {
   x: number;
@@ -38,10 +37,4 @@ export async function createFixturePdf(
     }
   }
   return new Uint8Array(await doc.save()) as Uint8Array<ArrayBuffer>;
-}
-
-export function itemsFromFixture(
-  page: ExtractedPage,
-): TextItemBox[] {
-  return page.items;
 }

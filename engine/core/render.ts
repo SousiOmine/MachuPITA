@@ -13,11 +13,7 @@ const CJK_FONTS = {
   bold: "NotoSansJP-Bold.ttf",
 };
 
-let FONT_DIR = join(PROJECT_ROOT, "assets", "fonts");
-
-export function setFontDir(dir: string): void {
-  FONT_DIR = dir;
-}
+const FONT_DIR = join(PROJECT_ROOT, "assets", "fonts");
 
 function hasCJK(text: string): boolean {
   return /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF\u3000-\u303F\uFF00-\uFFEF]/
@@ -53,8 +49,8 @@ interface EmbeddedFonts {
 async function embedFonts(doc: PDFDocument): Promise<EmbeddedFonts> {
   const fontkit = ((fontkitModule as Record<string, unknown>).default ??
     fontkitModule) as unknown as {
-    openSync: (path: string) => KitFont;
-  };
+      openSync: (path: string) => KitFont;
+    };
   const fk = fontkit as unknown;
   doc.registerFontkit(fk as never);
   const embedOpts = { subset: true };
@@ -147,8 +143,7 @@ export function wrapText(
 }
 
 /** 行頭に来せたくない文字(禁則処理) */
-const KINSOKU_NO_START =
-  /[\]、。,.:;!?！？・ー…‥°%‰)）〉》】」』〕”’]/;
+const KINSOKU_NO_START = /[\]、。,.:;!?！？・ー…‥°%‰)）〉》】」』〕”’]/;
 
 export interface RenderOptions {
   maskColor: string;
@@ -216,7 +211,9 @@ function buildRuns(
   let currentFont: PdfFont | undefined;
   let current = "";
   const flush = () => {
-    if (currentFont && current !== "") runs.push({ text: current, font: currentFont });
+    if (currentFont && current !== "") {
+      runs.push({ text: current, font: currentFont });
+    }
     current = "";
   };
   for (const ch of text) {

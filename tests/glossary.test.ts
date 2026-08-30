@@ -1,10 +1,10 @@
 import { assertEquals } from "@std/assert";
 import {
-  type GlossaryEntry,
   appendGlossary,
   buildGlossarySystemPrompt,
   collectGlossaryTexts,
   extractGlossary,
+  type GlossaryEntry,
   mergeGlossary,
   parseGlossaryResponse,
   sampleTexts,
@@ -17,12 +17,19 @@ Deno.test("parseGlossaryResponse extracts entries from noisy output", () => {
     'Glossary:\n[{"source":"attention mechanism","target":"注意機構"},{"source":"MachuPITA","target":"MachuPITA"}]\nDone.';
   const entries = parseGlossaryResponse(raw);
   assertEquals(entries.length, 2);
-  assertEquals(entries[0], { source: "attention mechanism", target: "注意機構" });
+  assertEquals(entries[0], {
+    source: "attention mechanism",
+    target: "注意機構",
+  });
   assertEquals(entries[1], { source: "MachuPITA", target: "MachuPITA" });
 });
 
 Deno.test("parseGlossaryResponse drops malformed entries and throws without array", () => {
-  assertEquals(parseGlossaryResponse('[{"source":"ab"},{"source":"xy","target":"y"}]').length, 1);
+  assertEquals(
+    parseGlossaryResponse('[{"source":"ab"},{"source":"xy","target":"y"}]')
+      .length,
+    1,
+  );
   let threw = false;
   try {
     parseGlossaryResponse("no json");

@@ -1,9 +1,6 @@
 import { getDocumentProxy } from "unpdf";
 import type { ExtractedPage, TextItemBox } from "./types.ts";
-import {
-  filterVisibleItems,
-  findInvisibleTextOrigins,
-} from "./visibility.ts";
+import { filterVisibleItems, findInvisibleTextOrigins } from "./visibility.ts";
 
 export async function extractPages(
   input: Uint8Array,

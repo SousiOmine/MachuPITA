@@ -54,7 +54,8 @@ function intersectRect(a: Rect | null, b: Rect): Rect {
 
 function containsPoint(r: Rect | null, x: number, y: number, tol = 1): boolean {
   if (!r) return true;
-  return x >= r.x0 - tol && x <= r.x1 + tol && y >= r.y0 - tol && y <= r.y1 + tol;
+  return x >= r.x0 - tol && x <= r.x1 + tol && y >= r.y0 - tol &&
+    y <= r.y1 + tol;
 }
 
 /** 行列をフラット形式・ラップ形式([matrixObj])の両方から解釈する */
@@ -96,7 +97,11 @@ function argAt(args: unknown, i: number): number | undefined {
 }
 
 /** 塗り色が(ほぼ)白かどうかを判定する */
-function isWhiteFill(fn: number, args: unknown[], OPS: Record<string, number>): boolean {
+function isWhiteFill(
+  fn: number,
+  args: unknown[],
+  OPS: Record<string, number>,
+): boolean {
   if (fn === OPS.setFillRGBColor) {
     const color = args[0];
     if (typeof color === "string") {
@@ -111,7 +116,8 @@ function isWhiteFill(fn: number, args: unknown[], OPS: Record<string, number>): 
     return Number(args[0]) >= 0.98;
   } else if (fn === OPS.setFillCMYKColor) {
     const v = (args as number[]).map((x) => Number(x));
-    return v.length === 4 && v[0] < 0.05 && v[1] < 0.05 && v[2] < 0.05 && v[3] < 0.05;
+    return v.length === 4 && v[0] < 0.05 && v[1] < 0.05 && v[2] < 0.05 &&
+      v[3] < 0.05;
   }
   return false;
 }
@@ -174,7 +180,10 @@ export async function findInvisibleTextOrigins(
           pendingClipRule = false;
           const minX = argAt(args[2], 0), minY = argAt(args[2], 1);
           const maxX = argAt(args[2], 2), maxY = argAt(args[2], 3);
-          if (minX !== undefined && maxX !== undefined && minY !== undefined && maxY !== undefined) {
+          if (
+            minX !== undefined && maxX !== undefined && minY !== undefined &&
+            maxY !== undefined
+          ) {
             const p0 = apply(ctm, minX, minY);
             const p1 = apply(ctm, maxX, maxY);
             clip = intersectRect(clip, {

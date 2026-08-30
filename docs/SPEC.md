@@ -126,7 +126,7 @@ MachuPITA/
 - 描画検証は unpdf `renderPageAsImage`(canvasImport に @napi-rs/canvas を注入)+ ピクセルサンプリングで自動化(tests/pipeline.test.ts)。
 - LLMなしの動作確認用に `MACHUPITA_FAUX=1` 環境変数または `--faux` で起動すると FauxEchoTranslator(`FAUX:` 接頭辞のダミー翻訳)が使われる。
 - OAuth ログインは pi-ai の provider 所有フローを CLI プロセス内で駆動する。`AuthInteraction.prompt` を @deno-ink/core の TextInput / SelectInput に直接結線し、auth_url / device_code / 手入力プロンプトは画面内に逐次表示する(HTTP ポーリング等は不要。`PiaiService.getLoginState` の状態オブジェクトを 200ms 間隔の再描画で追跡)。
-- デスクトップ・Web配布物は持たない。`deno compile` で単一バイナリ化できるが、pi-ai 全プロバイダ登録のため出力は肥大化する(node_modules 同梱)。将来は個別プロバイダファクトリ import への移行で縮小可能。
+- デスクトップ・Web配布物は持たない。`deno compile` で単一バイナリ化できる。モデルは SPEC §4 の対応プロバイダだけを個別ファクトリ import で登録するため、`providers/all` による全体登録よりもバンドルを小さく抑えられる。
 
 ## 4. LLM連携 (@earendil-works/pi-ai)
 
@@ -137,7 +137,7 @@ MachuPITA/
   - OAuth型(サブスク利用): **OpenAI Codex(ChatGPT Plus/Pro)**, GitHub Copilot
   - カスタム: OpenAI互換エンドポイント(baseUrl + key)で Ollama / LM Studio / vLLM 等に接続(CLI v1 では APIキー型プロバイダとして auth.json に保存)
 - 認証フロー (cli/auth-screen.tsx):
-  - 一覧: `auth` 画面に全プロバイダを認証方式・接続状態つきで表示。
+  - 一覧: `auth` 画面に全プロバイダを認証方式・接続状態つきで表示。APIキーとOAuthの両方を持つプロバイダは `both` として両方の選択肢を表示する。
   - APIキー型: マスク付き TextInput で入力 → `FileCredentialStore`(pi-ai の CredentialStore 互換形式、auth.json)に保存。
   - OAuth型: `PiaiService.startLogin` でブラウザ/デバイスコードフローを起動。イベント(認証URL・デバイスコード・進捗)を画面上に表示し、プロンプト(text / secret / select / manual_code)を TextInput / SelectInput で応答。ログイン完了後はアクション一覧へ戻る(モデル選択は `model` 画面で実施)。トークンは自動リフレッシュ。
   - 解除: 一覧の「認証を解除」で `logout`。状態は `listAuthStatuses` で確認。

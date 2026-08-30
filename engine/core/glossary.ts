@@ -1,3 +1,4 @@
+import { extractJsonArray } from "./json.ts";
 import type { Block } from "./types.ts";
 
 /** 用語集の1エントリ。target === source は「英語のまま保持」を意味する。 */
@@ -26,25 +27,14 @@ export function buildGlossarySystemPrompt(targetLanguage: string): string {
 }
 
 export function parseGlossaryResponse(raw: string): GlossaryEntry[] {
-  const start = raw.indexOf("[");
-  const end = raw.lastIndexOf("]");
-  if (start < 0 || end <= start) {
-    throw new Error("glossary response is not a JSON array");
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw.slice(start, end + 1));
-  } catch (err) {
-    throw new Error(`invalid JSON in glossary response: ${String(err)}`);
-  }
-  if (!Array.isArray(parsed)) {
-    throw new Error("glossary response is not a JSON array");
-  }
+  const parsed = extractJsonArray(raw);
   const entries: GlossaryEntry[] = [];
   for (const entry of parsed) {
     if (!entry || typeof entry !== "object") continue;
-    const source = String((entry as Record<string, unknown>).source ?? "").trim();
-    const target = String((entry as Record<string, unknown>).target ?? "").trim();
+    const source = String((entry as Record<string, unknown>).source ?? "")
+      .trim();
+    const target = String((entry as Record<string, unknown>).target ?? "")
+      .trim();
     if (source.length < 2 || target.length < 1) continue;
     entries.push({ source, target });
   }
@@ -76,7 +66,7 @@ export function appendGlossary(
     basePrompt,
     "",
     "Glossary (MANDATORY). These terms appear throughout the document:",
-    "GL1. If a term appears in the glossary below, you MUST render it exactly as its \"target\" everywhere it appears, in every item.",
+    'GL1. If a term appears in the glossary below, you MUST render it exactly as its "target" everywhere it appears, in every item.',
     "GL2. If a term's target equals its source (an English string), keep it in English; never translate it.",
     "",
     formatGlossary(entries),

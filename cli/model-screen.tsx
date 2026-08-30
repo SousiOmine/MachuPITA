@@ -2,26 +2,13 @@ import { useEffect, useState } from "react";
 import { Box, SelectInput, Spinner, Text, useInput } from "@deno-ink/core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { AppCtx } from "./context.ts";
-import { matchesProviderFilter } from "./auth-screen.tsx";
+import { matchesNameOrId } from "./filter.ts";
 import { SearchableList } from "./searchable-list.tsx";
 
 interface ConfiguredProvider {
   id: string;
   name: string;
   source?: string;
-}
-
-/** モデル絞り込み: 名前またはIDの部分一致 (大文字小文字を無視)。 */
-export function matchesModelFilter(
-  model: Pick<Model<Api>, "id" | "name">,
-  query: string,
-): boolean {
-  const q = query.trim().toLowerCase();
-  if (!q) return true;
-  return (
-    model.name.toLowerCase().includes(q) ||
-    model.id.toLowerCase().includes(q)
-  );
 }
 
 /** モデル選択画面: 認証済みプロバイダのモデルから選んで settings に保存する。 */
@@ -122,7 +109,7 @@ export function ModelScreen({
             label: `${p.name}${p.id === current.provider ? " (使用中)" : ""}`,
             value: p.id,
           })}
-          matches={matchesProviderFilter}
+          matches={matchesNameOrId}
           emptyMessage="該当するプロバイダがありません。"
           onSelect={(p) => {
             setNotice("");
@@ -183,7 +170,7 @@ export function ModelScreen({
           label: `${m.name || m.id}${isCurrent(m) ? " (使用中)" : ""}`,
           value: m.id,
         })}
-        matches={matchesModelFilter}
+        matches={matchesNameOrId}
         emptyMessage="該当するモデルがありません。"
         onSelect={async (m) => {
           await ctx.settings.update({

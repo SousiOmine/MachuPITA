@@ -1,4 +1,4 @@
-import { join } from "@std/path";
+import { dirname, join } from "@std/path";
 import type {
   AuthOperationOptions,
   Credential,
@@ -25,7 +25,7 @@ export class FileCredentialStore implements CredentialStore {
   }
 
   async #writeAll(shape: StoreShape): Promise<void> {
-    await Deno.mkdir(Deno.env.get("TEMP") ?? ".", { recursive: true });
+    await Deno.mkdir(dirname(this.#path), { recursive: true });
     const tmp = this.#path + ".tmp";
     await Deno.writeTextFile(tmp, JSON.stringify(shape, null, 2));
     await Deno.rename(tmp, this.#path);

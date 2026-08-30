@@ -69,8 +69,13 @@ function emptyLine(item: TextItemBox): LineBox {
     baselineY: item.y,
     text: "",
     fontSize: item.fontSize,
-    bold: /bold|black|heavy/i.test(item.fontName),
+    bold: isBoldFont(item.fontName),
   };
+}
+
+/** フォント名からの太字判定。 */
+function isBoldFont(fontName: string): boolean {
+  return /bold|black|heavy/i.test(fontName);
 }
 
 /** 文字数で重み付けした中央値。ドロップキャップや上付き文字を代表値にしない。 */
@@ -97,58 +102,8 @@ function dominantBaseline(items: TextItemBox[]): number {
   return (main ?? items[0]).y;
 }
 
-function assembleLine(items: TextItemBox[]): LineBox {
-  let text = "";
-  let x0 = Infinity;
-  let x1 = -Infinity;
-  let y0 = Infinity;
-  let y1 = -Infinity;
-  let boldWeight = 0;
-  const cells: LineBox[] = [];
-  let cellStart = 0;
-  const closeCell = (end: number) => {
-    const cellItems = items.slice(cellStart, end);
-    if (cellItems.length === 0) return;
-    cells.push(makeCell(cellItems));
-  };
-  for (let i = 0; i < items.length; i++) {
-    const it = items[i];
-    if (i > 0) {
-      const prev = items[i - 1];
-      const gap = it.x - (prev.x + prev.width);
-      if (gap > Math.max(1, prev.fontSize * 0.22)) text += " ";
-      if (
-        gap >= Math.max(prev.fontSize * CELL_GAP_RATIO, CELL_GAP_MIN_PT) &&
-        prev.str.trim() !== "" && it.str.trim() !== ""
-      ) {
-        text += " ";
-        closeCell(i);
-        cellStart = i;
-      }
-    }
-    text += it.str;
-    x0 = Math.min(x0, it.x);
-    x1 = Math.max(x1, it.x + it.width);
-    y0 = Math.min(y0, it.y - it.fontSize * DESCENT);
-    y1 = Math.max(y1, it.y + it.fontSize * ASCENT);
-    if (/bold|black|heavy/i.test(it.fontName)) boldWeight++;
-  }
-  closeCell(items.length);
-  const baselineY = dominantBaseline(items);
-  return {
-    x0,
-    y0,
-    x1,
-    y1,
-    baselineY,
-    text: normalizeLineText(text),
-    fontSize: representativeFontSize(items),
-    bold: boldWeight * 2 >= items.length && boldWeight > 0,
-    cells: cells.length > 1 ? cells : undefined,
-  };
-}
-
-function makeCell(items: TextItemBox[]): LineBox {
+/** テキスト項目群から1行の LineBox を組み立てる(セル行は cells を保持する)。 */
+function buildLineBox(items: TextItemBox[], cells?: LineBox[]): LineBox {
   let text = "";
   let x0 = Infinity;
   let x1 = -Infinity;
@@ -168,7 +123,7 @@ function makeCell(items: TextItemBox[]): LineBox {
     x1 = Math.max(x1, it.x + it.width);
     y0 = Math.min(y0, it.y - it.fontSize * DESCENT);
     y1 = Math.max(y1, it.y + it.fontSize * ASCENT);
-    if (/bold|black|heavy/i.test(it.fontName)) boldWeight++;
+    if (isBoldFont(it.fontName)) boldWeight++;
   }
   return {
     x0,
@@ -179,7 +134,36 @@ function makeCell(items: TextItemBox[]): LineBox {
     text: normalizeLineText(text),
     fontSize: representativeFontSize(items),
     bold: boldWeight * 2 >= items.length && boldWeight > 0,
+    cells,
   };
+}
+
+function assembleLine(items: TextItemBox[]): LineBox {
+  // 行内の大きい余白(既定 1em / 8pt 以上)でセル(著者グリッド・表・数式)に分割する。
+  // セルは単独ブロック扱いにし、段落統合でグリッドが崩れるのを防ぐ。
+  const cells: LineBox[] = [];
+  let cellStart = 0;
+  const closeCell = (end: number) => {
+    const cellItems = items.slice(cellStart, end);
+    if (cellItems.length === 0) return;
+    cells.push(buildLineBox(cellItems));
+  };
+  for (let i = 0; i < items.length; i++) {
+    if (i === 0) continue;
+    const prev = items[i - 1];
+    const it = items[i];
+    const gap = it.x - (prev.x + prev.width);
+    if (
+      gap >= Math.max(prev.fontSize * CELL_GAP_RATIO, CELL_GAP_MIN_PT) &&
+      prev.str.trim() !== "" && it.str.trim() !== ""
+    ) {
+      closeCell(i);
+      cellStart = i;
+    }
+  }
+  closeCell(items.length);
+  const line = buildLineBox(items);
+  return cells.length > 1 ? { ...line, cells } : line;
 }
 
 function normalizeLineText(text: string): string {
@@ -362,20 +346,18 @@ function isCentered(group: LineBox[]): boolean {
   return centers.every((c) => Math.abs(c - mean) < maxWidth * 0.06 + 2);
 }
 
-let blockCounter = 0;
-
 function makeBlock(
   group: LineBox[],
   page: ExtractedPage,
   medianFs: number,
   columnIndex: number,
+  id: string,
 ): Block {
-  blockCounter++;
   const fontSize = Math.round(
     (group.reduce((a, l) => a + l.fontSize, 0) / group.length) * 10,
   ) / 10;
   return {
-    id: `b${blockCounter}`,
+    id,
     page: page.pageNumber,
     columnIndex,
     x0: Math.min(...group.map((l) => l.x0)),
@@ -438,11 +420,15 @@ export function analyzePage(page: ExtractedPage): PageLayout {
   }
   const fontSizes = lines.map((l) => l.fontSize).sort((a, b) => a - b);
   const medianFs = fontSizes[Math.floor(fontSizes.length / 2)] ?? 10;
+  // ブロックIDはページ番号+連番の決定的な値にする(sidecar JSON の再現性・
+  // テストの順序非依存性のため。モジュールレベルのカウンタは使わない)。
+  let seq = 0;
+  const nextId = () => `p${page.pageNumber}-${seq++}`;
   for (const [colIndex, columnLines] of byColumn) {
     for (const group of groupParagraphs(columnLines, colIndex)) {
       const text = mergeLineTexts(group);
       if (text === "") continue;
-      blocks.push(makeBlock(group, page, medianFs, colIndex));
+      blocks.push(makeBlock(group, page, medianFs, colIndex, nextId()));
     }
     // セル分割された行(著者グリッド・表など)は行内の各セルを独立ブロックにする。
     // 縦方向の段落統合を行うとグリッドが1文に連結されて崩れるため。
@@ -452,7 +438,7 @@ export function analyzePage(page: ExtractedPage): PageLayout {
       const formulaLine = looksLikeFormula(line.text);
       for (const cell of line.cells ?? []) {
         if (cell.text === "") continue;
-        const block = makeBlock([cell], page, medianFs, colIndex);
+        const block = makeBlock([cell], page, medianFs, colIndex, nextId());
         block.centered = false;
         if (formulaLine) {
           block.status = "skipped";

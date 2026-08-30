@@ -5,7 +5,6 @@ export const PROJECT_ROOT = join(dirname(fromFileUrl(import.meta.url)), "..");
 export interface AppPaths {
   dataDir: string;
   fontsDir: string;
-  distDir: string;
 }
 
 export function resolveAppPaths(dataDirOverride?: string): AppPaths {
@@ -16,7 +15,6 @@ export function resolveAppPaths(dataDirOverride?: string): AppPaths {
   return {
     dataDir: dataDirOverride ?? join(base, "machupita"),
     fontsDir: join(PROJECT_ROOT, "assets", "fonts"),
-    distDir: join(PROJECT_ROOT, "web", "dist"),
   };
 }
 
@@ -40,7 +38,6 @@ export interface Settings {
   provider: string;
   model: string;
   customBaseUrl?: string;
-  apiKeyDrafts?: Record<string, string>;
   targetLanguage: string;
   targetLanguageFree?: string;
   outputFormat: OutputFormat;

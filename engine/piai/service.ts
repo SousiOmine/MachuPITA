@@ -1,4 +1,4 @@
-import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import { createModels } from "@earendil-works/pi-ai";
 import type {
   Api,
   AuthEvent,
@@ -6,9 +6,45 @@ import type {
   AuthPrompt,
   Model,
   Models,
+  MutableModels,
+  Provider,
 } from "@earendil-works/pi-ai";
+import { amazonBedrockProvider } from "@earendil-works/pi-ai/providers/amazon-bedrock";
+import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
+import { azureOpenAIResponsesProvider } from "@earendil-works/pi-ai/providers/azure-openai-responses";
+import { deepseekProvider } from "@earendil-works/pi-ai/providers/deepseek";
+import { githubCopilotProvider } from "@earendil-works/pi-ai/providers/github-copilot";
+import { googleProvider } from "@earendil-works/pi-ai/providers/google";
+import { groqProvider } from "@earendil-works/pi-ai/providers/groq";
+import { mistralProvider } from "@earendil-works/pi-ai/providers/mistral";
+import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
+import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
+import { openrouterProvider } from "@earendil-works/pi-ai/providers/openrouter";
+import { xaiProvider } from "@earendil-works/pi-ai/providers/xai";
 import { deepinfraProvider } from "./deepinfra.ts";
 import { FileCredentialStore } from "./store.ts";
+
+/**
+ * v1 で対応するプロバイダのファクトリのみ登録する。
+ * `providers/all` ではなく個別ファクトリを import することで、`deno compile`
+ * 時のバンドルサイズ増大を抑える(SPEC §4 / 実装メモ §3a 参照)。
+ * プロバイダを追加する場合はここにファクトリを足すだけでよい。
+ */
+const PROVIDER_FACTORIES: (() => Provider)[] = [
+  openaiProvider,
+  anthropicProvider,
+  googleProvider,
+  openrouterProvider,
+  xaiProvider,
+  mistralProvider,
+  groqProvider,
+  deepseekProvider,
+  deepinfraProvider,
+  azureOpenAIResponsesProvider,
+  amazonBedrockProvider,
+  openaiCodexProvider,
+  githubCopilotProvider,
+];
 
 export interface LoginUiState {
   providerId: string;
@@ -25,7 +61,7 @@ export interface LoginUiState {
 }
 
 export class PiaiService {
-  #models: Models | null = null;
+  #models: MutableModels | null = null;
   #store: FileCredentialStore;
   #logins = new Map<string, LoginUiState>();
 
@@ -35,8 +71,10 @@ export class PiaiService {
 
   models(): Models {
     if (!this.#models) {
-      const models = builtinModels({ credentials: this.#store });
-      models.setProvider(deepinfraProvider());
+      const models = createModels({ credentials: this.#store });
+      for (const factory of PROVIDER_FACTORIES) {
+        models.setProvider(factory());
+      }
       this.#models = models;
     }
     return this.#models;
@@ -46,8 +84,10 @@ export class PiaiService {
     return this.models().getProviders().map((p) => ({
       id: p.id,
       name: p.name,
-      authType: p.auth.apiKey
-        ? ("api_key" as const)
+      // apiKey と oauth の両方を持つプロバイダは "both" とし、UI で両方の
+      // 認証選択肢を提供する。一方のみの場合はその type を返す。
+      authType: (p.auth.apiKey && p.auth.oauth)
+        ? ("both" as const)
         : p.auth.oauth
         ? ("oauth" as const)
         : ("api_key" as const),

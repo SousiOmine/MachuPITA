@@ -52,6 +52,24 @@ export function TranslateSetupScreen({
   const [freeText, setFreeText] = useState("");
   const [format, setFormat] = useState<OutputFormat>("mono");
 
+  // 対話ウィザードの初期値をアプリ設定(settings.json)から引き継ぐ。
+  // 毎回 "ja" から始めるのではなく、前回の翻訳先を既定に使う。
+  useEffect(() => {
+    let cancelled = false;
+    void ctx.settings.get().then((s) => {
+      if (cancelled) return;
+      if (s.targetLanguage === "free") {
+        setLang("free");
+        setFreeText(s.targetLanguageFree ?? "");
+      } else if (LANGUAGE_PRESETS.some((l) => l.code === s.targetLanguage)) {
+        setLang(s.targetLanguage);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [ctx]);
+
   // 最初のステップで Esc → メニューへ戻る
   useInput((_input, key) => {
     if (key.escape && step === "file") onBack();

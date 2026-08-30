@@ -1,9 +1,6 @@
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
-import { envApiKeyAuth, createProvider } from "@earendil-works/pi-ai";
-import type {
-  Model,
-  OpenAICompletionsCompat,
-} from "@earendil-works/pi-ai";
+import { createProvider, envApiKeyAuth } from "@earendil-works/pi-ai";
+import type { Model, OpenAICompletionsCompat } from "@earendil-works/pi-ai";
 
 const BASE_URL = "https://api.deepinfra.com/v1/openai";
 

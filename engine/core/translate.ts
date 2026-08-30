@@ -1,4 +1,10 @@
-import type { Api, Model, Models, TextContent } from "@earendil-works/pi-ai";
+import type {
+  Api,
+  AssistantMessage,
+  Model,
+  Models,
+  TextContent,
+} from "@earendil-works/pi-ai";
 import type { Block, TokenUsageTotals } from "./types.ts";
 import { protectPlaceholders, restorePlaceholders } from "./classify.ts";
 import {
@@ -8,6 +14,7 @@ import {
   type GlossaryCall,
   type GlossaryEntry,
 } from "./glossary.ts";
+import { extractJsonArray } from "./json.ts";
 
 export interface TranslateJobOptions {
   targetLanguage: string;
@@ -31,13 +38,29 @@ export interface Translator {
     signal: AbortSignal,
   ): Promise<BatchResult[]>;
   usage(): TokenUsageTotals;
-  /** 文書全体の用語集を抽出する(対応する実装のみ)。 */
-  extractGlossary?(
+}
+
+/**
+ * 用語集抽出に対応する Translator の拡張インターフェース。
+ * 未対応の実装(FauxEchoTranslator など)は持たない(インターフェース分離)。
+ */
+export interface GlossaryCapable {
+  extractGlossary(
     texts: string[],
     signal: AbortSignal,
   ): Promise<GlossaryEntry[]>;
-  /** 用語集を反映した新しい Translator を返す(対応する実装のみ)。 */
-  withGlossary?(entries: GlossaryEntry[]): Translator;
+  withGlossary(entries: GlossaryEntry[]): Translator;
+}
+
+/** Translator が用語集抽出に対応しているかを型ガードで判定する。 */
+export function isGlossaryCapable(
+  translator: Translator,
+): translator is Translator & GlossaryCapable {
+  return (
+    typeof (translator as Partial<GlossaryCapable>).extractGlossary ===
+      "function" &&
+    typeof (translator as Partial<GlossaryCapable>).withGlossary === "function"
+  );
 }
 /** ターゲット言語が日本語かどうか。ラベル("日本語"等)またはコード("ja")で判定する。 */
 export function isJapaneseTarget(targetLanguage: string): boolean {
@@ -71,7 +94,7 @@ export function buildSystemPrompt(targetLanguage: string): string {
   ].join("\n");
 }
 
-export class PiTranslator implements Translator {
+export class PiTranslator implements Translator, GlossaryCapable {
   #models: Models;
   #model: Model<Api>;
   #systemPrompt: string;
@@ -100,6 +123,31 @@ export class PiTranslator implements Translator {
     return this.#totals;
   }
 
+  /** 応答の usage 集計と中止・エラー停止の検出を共通処理する。 */
+  #recordMessage(message: AssistantMessage): void {
+    const u = message.usage;
+    if (u) {
+      this.#totals.input += u.input ?? 0;
+      this.#totals.output += u.output ?? 0;
+      this.#totals.total += u.totalTokens ?? 0;
+      this.#totals.costTotal += u.cost?.total ?? 0;
+    }
+    if (message.stopReason === "aborted") {
+      throw new DOMException("aborted", "AbortError");
+    }
+    if (message.stopReason === "error") {
+      throw new Error(message.errorMessage ?? "LLM request failed");
+    }
+  }
+
+  /** 応答からテキストコンテンツを連結して返す。 */
+  #textOf(message: AssistantMessage): string {
+    return message.content
+      .filter((c): c is TextContent => c.type === "text")
+      .map((c) => c.text)
+      .join("");
+  }
+
   async translateBatch(
     items: BatchItem[],
     signal: AbortSignal,
@@ -124,24 +172,8 @@ export class PiTranslator implements Translator {
         signal,
       },
     );
-    const u = message.usage;
-    if (u) {
-      this.#totals.input += u.input ?? 0;
-      this.#totals.output += u.output ?? 0;
-      this.#totals.total += u.totalTokens ?? 0;
-      this.#totals.costTotal += u.cost?.total ?? 0;
-    }
-    if (message.stopReason === "aborted") {
-      throw new DOMException("aborted", "AbortError");
-    }
-    if (message.stopReason === "error") {
-      throw new Error(message.errorMessage ?? "LLM request failed");
-    }
-    const text = message.content
-      .filter((c): c is TextContent => c.type === "text")
-      .map((c) => c.text)
-      .join("");
-    return parseBatchResponse(text, items);
+    this.#recordMessage(message);
+    return parseBatchResponse(this.#textOf(message), items);
   }
 
   #complete(
@@ -163,23 +195,8 @@ export class PiTranslator implements Translator {
         signal,
       },
     ).then((message) => {
-      const u = message.usage;
-      if (u) {
-        this.#totals.input += u.input ?? 0;
-        this.#totals.output += u.output ?? 0;
-        this.#totals.total += u.totalTokens ?? 0;
-        this.#totals.costTotal += u.cost?.total ?? 0;
-      }
-      if (message.stopReason === "aborted") {
-        throw new DOMException("aborted", "AbortError");
-      }
-      if (message.stopReason === "error") {
-        throw new Error(message.errorMessage ?? "LLM request failed");
-      }
-      return message.content
-        .filter((c): c is TextContent => c.type === "text")
-        .map((c) => c.text)
-        .join("");
+      this.#recordMessage(message);
+      return this.#textOf(message);
     });
   }
 
@@ -211,18 +228,7 @@ export function parseBatchResponse(
   raw: string,
   expected: BatchItem[],
 ): BatchResult[] {
-  const start = raw.indexOf("[");
-  const end = raw.lastIndexOf("]");
-  if (start < 0 || end <= start) {
-    throw new Error("response is not a JSON array");
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw.slice(start, end + 1));
-  } catch (err) {
-    throw new Error(`invalid JSON in response: ${String(err)}`);
-  }
-  if (!Array.isArray(parsed)) throw new Error("response is not a JSON array");
+  const parsed = extractJsonArray(raw);
   const results: BatchResult[] = [];
   for (const entry of parsed) {
     if (

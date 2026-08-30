@@ -78,8 +78,7 @@ export function restorePlaceholders(
   return { text: out.replace(/\s+/g, " ").trim(), missingTokens: missing };
 }
 
-const MATH_OPERATOR_RE =
-  /[=≈≡≪≫≤≥≠∈∉∋⊂⊃⊆⊇∪∩∑∏∫√∂∇←→↔⇐⇒∝∀∃∅ℝℕℤ±∓×÷⊙⊕]/;
+const MATH_OPERATOR_RE = /[=≈≡≪≫≤≥≠∈∉∋⊂⊃⊆⊇∪∩∑∏∫√∂∇←→↔⇐⇒∝∀∃∅ℝℕℤ±∓×÷⊙⊕]/;
 
 /**
  * 数式とみなせるかどうか。

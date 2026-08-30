@@ -1,39 +1,24 @@
 import { assert, assertEquals, assertExists, assertFalse } from "@std/assert";
 import { join } from "@std/path";
-import { parseArgs } from "../cli/run.ts";
-import { matchesProviderFilter } from "../cli/auth-screen.tsx";
-import { matchesModelFilter } from "../cli/model-screen.tsx";
+import { ArgParseError, parseArgs } from "../cli/run.ts";
+import { matchesNameOrId } from "../cli/filter.ts";
+import { buildSummary } from "../cli/translate.ts";
 import { PROJECT_ROOT } from "../engine/settings.ts";
 import { createFixturePdf } from "./helpers.ts";
 
-Deno.test("provider filter: 名前とIDの部分一致で絞り込む", () => {
+Deno.test("filter: 名前とIDの部分一致で絞り込む", () => {
   const p = { id: "anthropic", name: "Anthropic" };
-  assert(matchesProviderFilter(p, "ant"));
-  assert(matchesProviderFilter(p, "ANTH"));
-  assert(matchesProviderFilter(p, "throp"));
-  assert(matchesProviderFilter(p, "  ant  "), "前後空白は無視する");
+  assert(matchesNameOrId(p, "ant"));
+  assert(matchesNameOrId(p, "ANTH"));
+  assert(matchesNameOrId(p, "throp"));
+  assert(matchesNameOrId(p, "  ant  "), "前後空白は無視する");
   assert(
-    matchesProviderFilter(
-      { id: "custom-endpoint", name: "Custom" },
-      "endpoint",
-    ),
-  );
-  assert(!matchesProviderFilter(p, "openai"));
-  assert(matchesProviderFilter(p, ""), "空クエリは全件一致");
-});
-
-Deno.test("model filter: 名前とIDの部分一致で絞り込む", () => {
-  const m = { id: "claude-3-5-sonnet", name: "Claude 3.5 Sonnet" };
-  assert(matchesModelFilter(m, "claude"));
-  assert(matchesModelFilter(m, "SONNET"));
-  assert(matchesModelFilter(m, "sonn"));
-  assert(matchesModelFilter(m, "  claude  "), "前後空白は無視する");
-  assert(
-    matchesModelFilter({ id: "gpt-4o", name: "GPT-4o" }, "gpt-4o"),
+    matchesNameOrId({ id: "custom-endpoint", name: "Custom" }, "endpoint"),
     "IDでも引ける",
   );
-  assert(!matchesModelFilter(m, "gpt"));
-  assert(matchesModelFilter(m, ""), "空クエリは全件一致");
+  assert(matchesNameOrId({ id: "gpt-4o", name: "GPT-4o" }, "gpt-4o"));
+  assert(!matchesNameOrId(p, "openai"));
+  assert(matchesNameOrId(p, ""), "空クエリは全件一致");
 });
 
 Deno.test("parseArgs: PDFパスとフラグを解釈する", () => {
@@ -68,6 +53,64 @@ Deno.test("parseArgs: 引数なしはメニュー、help/auth/model/settings を
   assertEquals(parseArgs(["auth"]).command, "auth");
   assertEquals(parseArgs(["model"]).command, "model");
   assertEquals(parseArgs(["settings"]).command, "settings");
+});
+
+Deno.test("parseArgs: 不正な数値・形式・不明オプションは ArgParseError", () => {
+  const cases: string[][] = [
+    ["paper.pdf", "--concurrency", "abc"],
+    ["paper.pdf", "--concurrency", "0"],
+    ["paper.pdf", "--concurrency", "2.5"],
+    ["paper.pdf", "--batch-size", "50"],
+    ["paper.pdf", "--min-font-scale", "2"],
+    ["paper.pdf", "--min-font-scale", "0"],
+    ["paper.pdf", "--mask-color", "ffffff"],
+    ["paper.pdf", "--format", "triple"],
+    ["paper.pdf", "--unknown"],
+    ["paper.pdf", "--lang"],
+  ];
+  for (const argv of cases) {
+    let threw = false;
+    try {
+      parseArgs(argv);
+    } catch (err) {
+      threw = err instanceof ArgParseError;
+    }
+    assert(threw, `should throw ArgParseError for: ${argv.join(" ")}`);
+  }
+});
+
+Deno.test("parseArgs: 正当なマスク色・フォント縮小は受け付ける", () => {
+  const args = parseArgs([
+    "paper.pdf",
+    "--mask-color",
+    "#abcdef",
+    "--min-font-scale",
+    "0.55",
+  ]);
+  assertEquals(args.flags.maskColor, "#abcdef");
+  assertEquals(args.flags.minFontScale, 0.55);
+});
+
+Deno.test("buildSummary: 成果物パスとエラー・中止を整形する", () => {
+  const done = buildSummary({
+    status: "done",
+    artifacts: {
+      mono: "/tmp/out/a_translated.pdf",
+      dual: "/tmp/out/a_bilingual.pdf",
+      sidecar: "/tmp/out/a_sidecar.json",
+      original: "/tmp/out/a_original.pdf",
+    },
+  });
+  assert(done.includes("/tmp/out/a_translated.pdf"));
+  assert(done.includes("/tmp/out/a_bilingual.pdf"));
+  assert(done.includes("/tmp/out/a_sidecar.json"));
+  assert(done.includes("/tmp/out/a_original.pdf"));
+
+  assertEquals(
+    buildSummary({ status: "error", error: "boom" }),
+    "エラー: boom",
+  );
+  assertEquals(buildSummary({ status: "cancelled" }), "中止されました。");
 });
 
 /** faux モードで main.ts をサブプロセス実行し、成果物ディレクトリを返す。 */

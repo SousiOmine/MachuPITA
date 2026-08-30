@@ -3,14 +3,11 @@ import { extractPages } from "./core/extract.ts";
 import { analyzePage } from "./core/layout.ts";
 import { classifyBlocks } from "./core/classify.ts";
 import {
-  buildSystemPrompt,
+  isGlossaryCapable,
   translateBlocks,
   type Translator,
 } from "./core/translate.ts";
-import {
-  type GlossaryEntry,
-  collectGlossaryTexts,
-} from "./core/glossary.ts";
+import { collectGlossaryTexts, type GlossaryEntry } from "./core/glossary.ts";
 import { buildDualPdf, renderTranslatedPdf } from "./core/render.ts";
 import type { Block, PageLayout, TokenUsageTotals } from "./core/types.ts";
 import { LANGUAGE_PRESETS } from "./settings.ts";
@@ -96,11 +93,6 @@ function emptyUsage(): TokenUsageTotals {
 export class JobManager {
   #jobs = new Map<string, JobInternals>();
 
-  cleanupStale(): void {
-    // best-effort removal of previous session's job dirs is skipped:
-    // OS temp dirs are cleaned by the operating system.
-  }
-
   create(
     fileName: string,
     bytes: Uint8Array,
@@ -141,22 +133,27 @@ export class JobManager {
       },
     };
     this.#jobs.set(id, internals);
-    void runner(
-      internals,
-      internals.controller.signal,
-      (event) => this.#emit(internals, event),
-    ).catch((err) => {
-      const aborted = err instanceof Error && err.name === "AbortError";
-      internals.snapshot.stage = aborted ? "cancelled" : "error";
-      internals.snapshot.error = aborted
-        ? undefined
-        : err instanceof Error
-        ? err.message
-        : String(err);
-      internals.snapshot.finishedAt = Date.now();
-      this.#emit(internals, {
-        type: aborted ? "cancelled" : "error",
-        payload: aborted ? null : internals.snapshot.error,
+    // runner の開始は create 呼び出しの同期コード(→呼び出し元の subscribe)の
+    // 後に遅らせる。同期的に完了する runner でも、イベント購読や初期キュー状態
+    // (stage: "queued" のスナップショット)が先に確立されることを保証する。
+    queueMicrotask(() => {
+      void runner(
+        internals,
+        internals.controller.signal,
+        (event) => this.#emit(internals, event),
+      ).catch((err) => {
+        const aborted = err instanceof Error && err.name === "AbortError";
+        internals.snapshot.stage = aborted ? "cancelled" : "error";
+        internals.snapshot.error = aborted
+          ? undefined
+          : err instanceof Error
+          ? err.message
+          : String(err);
+        internals.snapshot.finishedAt = Date.now();
+        this.#emit(internals, {
+          type: aborted ? "cancelled" : "error",
+          payload: aborted ? null : internals.snapshot.error,
+        });
       });
     });
     return this.snapshotOf(internals);
@@ -225,12 +222,6 @@ export function resolveTargetLanguageLabel(
     return freeText ? `${preset.label} (${freeText})` : preset.label;
   }
   return code;
-}
-
-export function makeTranslatorFactory(
-  translatorFactory: () => Promise<Translator>,
-) {
-  return translatorFactory;
 }
 
 export async function runPipeline(
@@ -404,7 +395,7 @@ export async function withDocumentGlossary(
   signal: AbortSignal,
   warn: (message: string) => void,
 ): Promise<{ translator: Translator; glossary: GlossaryEntry[] }> {
-  if (!translator.extractGlossary || !translator.withGlossary) {
+  if (!isGlossaryCapable(translator)) {
     return { translator, glossary: [] };
   }
   const texts = collectGlossaryTexts(blocks);
@@ -418,13 +409,4 @@ export async function withDocumentGlossary(
     warn("用語集の抽出に失敗したためグロッサリなしで翻訳を続行します");
     return { translator, glossary: [] };
   }
-}
-
-export function buildPromptFor(options: JobOptionsPayload): string {
-  return buildSystemPrompt(
-    resolveTargetLanguageLabel(
-      options.targetLanguage,
-      options.targetLanguageFree,
-    ),
-  );
 }

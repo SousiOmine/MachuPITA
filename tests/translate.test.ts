@@ -1,8 +1,10 @@
-import { assertEquals } from "@std/assert";
+import { assert, assertEquals, assertFalse } from "@std/assert";
 import {
   type BatchItem,
   type BatchResult,
   buildSystemPrompt,
+  type GlossaryCapable,
+  isGlossaryCapable,
   isJapaneseTarget,
   parseBatchResponse,
   translateBlocks,
@@ -143,4 +145,18 @@ Deno.test("buildSystemPrompt: 日本語ターゲットに常体ルールを追�
   assertEquals(en.includes("常体 (だ・である調)"), false);
   // 既存のハードルールは維持される
   assertEquals(ja.includes("a JSON array of objects"), true);
+});
+
+Deno.test("isGlossaryCapable: 用語集対応の翻訳器のみ true を返す", () => {
+  const base: Translator = {
+    translateBatch: async () => [],
+    usage: () => ({ input: 0, output: 0, total: 0, costTotal: 0 }),
+  };
+  assertFalse(isGlossaryCapable(base), "用語集非対応は false");
+  const withGlossary: Translator & GlossaryCapable = {
+    ...base,
+    extractGlossary: async () => [],
+    withGlossary: (_entries) => withGlossary,
+  };
+  assert(isGlossaryCapable(withGlossary), "用語集対応は true");
 });

@@ -37,6 +37,45 @@ export interface CliArgs {
   flags: TranslateCliFlags;
 }
 
+/** 引数解析エラー(不正な値・欠落した値)。終了コード2で終了する。 */
+export class ArgParseError extends Error {}
+
+/** 正の整数フラグ(--concurrency / --batch-size など)を検証して返す。 */
+function parsePositiveInt(
+  name: string,
+  val: string,
+  min = 1,
+): number {
+  const n = Number(val);
+  if (!Number.isInteger(n) || n < min) {
+    throw new ArgParseError(
+      `${name} は ${min} 以上の整数を指定してください (指定値: ${val})`,
+    );
+  }
+  return n;
+}
+
+/** 0 < n <= 1 の実数フラグ(--min-font-scale)を検証して返す。 */
+function parseUnitInterval(name: string, val: string): number {
+  const n = Number(val);
+  if (!Number.isFinite(n) || n <= 0 || n > 1) {
+    throw new ArgParseError(
+      `${name} は 0 より大きく 1 以下の数値を指定してください (指定値: ${val})`,
+    );
+  }
+  return n;
+}
+
+/** #rrggbb 形式の色フラグ(--mask-color)を検証して返す。 */
+function parseHexColor(name: string, val: string): string {
+  if (!/^#[0-9a-fA-F]{6}$/.test(val)) {
+    throw new ArgParseError(
+      `${name} は #rrggbb 形式で指定してください (指定値: ${val})`,
+    );
+  }
+  return val;
+}
+
 export function parseArgs(argv: string[]): CliArgs {
   const flags: TranslateCliFlags = {};
   let command: CliCommand = "menu";
@@ -71,13 +110,18 @@ export function parseArgs(argv: string[]): CliArgs {
       default:
         if (a.startsWith("-")) {
           const val = argv[i + 1];
-          if (val === undefined) break;
           switch (a) {
             case "--lang":
+              if (val === undefined) {
+                throw new ArgParseError("--lang に値を指定してください");
+              }
               flags.lang = val;
               i++;
               break;
             case "--lang-free":
+              if (val === undefined) {
+                throw new ArgParseError("--lang-free に値を指定してください");
+              }
               flags.langFree = val;
               i++;
               break;
@@ -85,36 +129,67 @@ export function parseArgs(argv: string[]): CliArgs {
               if (val === "mono" || val === "dual") {
                 flags.format = val;
                 i++;
+              } else {
+                throw new ArgParseError(
+                  `--format は mono または dual を指定してください (指定値: ${
+                    val ?? "(なし)"
+                  })`,
+                );
               }
               break;
             case "--out-dir":
+              if (val === undefined) {
+                throw new ArgParseError("--out-dir に値を指定してください");
+              }
               flags.outDir = val;
               i++;
               break;
             case "--concurrency":
-              flags.concurrency = Number(val);
+              if (val === undefined) {
+                throw new ArgParseError("--concurrency に値を指定してください");
+              }
+              flags.concurrency = parsePositiveInt("--concurrency", val);
               i++;
               break;
             case "--batch-size":
-              flags.batchSizeChars = Number(val);
+              if (val === undefined) {
+                throw new ArgParseError("--batch-size に値を指定してください");
+              }
+              flags.batchSizeChars = parsePositiveInt("--batch-size", val, 100);
               i++;
               break;
             case "--mask-color":
-              flags.maskColor = val;
+              if (val === undefined) {
+                throw new ArgParseError("--mask-color に値を指定してください");
+              }
+              flags.maskColor = parseHexColor("--mask-color", val);
               i++;
               break;
             case "--min-font-scale":
-              flags.minFontScale = Number(val);
+              if (val === undefined) {
+                throw new ArgParseError(
+                  "--min-font-scale に値を指定してください",
+                );
+              }
+              flags.minFontScale = parseUnitInterval("--min-font-scale", val);
               i++;
               break;
             case "--provider":
+              if (val === undefined) {
+                throw new ArgParseError("--provider に値を指定してください");
+              }
               flags.provider = val;
               i++;
               break;
             case "--model":
+              if (val === undefined) {
+                throw new ArgParseError("--model に値を指定してください");
+              }
               flags.model = val;
               i++;
               break;
+            default:
+              throw new ArgParseError(`不明なオプションです: ${a}`);
           }
         } else {
           positional.push(a);
@@ -196,7 +271,16 @@ async function ensureFontsAvailable(fontsDir: string): Promise<void> {
 }
 
 export async function runCli(argv: string[]): Promise<void> {
-  const args = parseArgs(argv);
+  let args: CliArgs;
+  try {
+    args = parseArgs(argv);
+  } catch (err) {
+    if (err instanceof ArgParseError) {
+      console.error(`引数エラー: ${err.message}`);
+      Deno.exit(2);
+    }
+    throw err;
+  }
   if (args.command === "help") {
     console.log(HELP_TEXT);
     return;
@@ -212,7 +296,6 @@ export async function runCli(argv: string[]): Promise<void> {
     paths,
     faux: Deno.env.get("MACHUPITA_FAUX") === "1" || args.flags.faux === true,
   };
-  ctx.jobs.cleanupStale();
 
   const outcome: CliOutcome = { status: "running" };
   let initial: Screen = { kind: "menu" };

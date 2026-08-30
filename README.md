@@ -89,7 +89,7 @@ deno task cli paper.pdf --lang en --format dual --out-dir out
 ## テスト
 
 ```powershell
-deno test -A       # 18テスト(解析/分類/翻訳モック/描画の視覚検証/CLI E2E)
+deno test -A       # 59テスト(解析/分類/翻訳モック/描画の視覚検証/可視性判定/CLI E2E/ジョブ管理)
 deno task check    # 型チェック
 deno lint          # 静的検査
 ```

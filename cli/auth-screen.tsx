@@ -11,12 +11,13 @@ import {
 import type { SelectInputItem } from "@deno-ink/core";
 import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
 import type { AppCtx } from "./context.ts";
+import { matchesNameOrId } from "./filter.ts";
 import { SearchableList } from "./searchable-list.tsx";
 
 interface ProviderRow {
   id: string;
   name: string;
-  authType: "api_key" | "oauth";
+  authType: "api_key" | "oauth" | "both";
   hasInteractiveLogin: boolean;
   configured: boolean;
   source?: string;
@@ -24,17 +25,16 @@ interface ProviderRow {
 
 type View = "list" | "actions" | "api-key" | "oauth";
 
-/** プロバイダ絞り込み: 名前またはIDの部分一致 (大文字小文字を無視)。 */
-export function matchesProviderFilter(
-  provider: Pick<ProviderRow, "id" | "name">,
-  query: string,
-): boolean {
-  const q = query.trim().toLowerCase();
-  if (!q) return true;
-  return (
-    provider.name.toLowerCase().includes(q) ||
-    provider.id.toLowerCase().includes(q)
-  );
+/** 認証種別の表示ラベル(api_key / oauth / both)。 */
+function authTypeLabel(type: ProviderRow["authType"]): string {
+  switch (type) {
+    case "oauth":
+      return "OAuth";
+    case "both":
+      return "OAuth / APIキー";
+    default:
+      return "APIキー";
+  }
 }
 
 export function AuthScreen({
@@ -125,11 +125,11 @@ export function AuthScreen({
           title="プロバイダを選択"
           rows={providers}
           toItem={(p) => ({
-            label: `${p.name} [${p.authType === "oauth" ? "OAuth" : "APIキー"}]` +
+            label: `${p.name} [${authTypeLabel(p.authType)}]` +
               (p.configured ? " ✓接続済み" : " 未設定"),
             value: p.id,
           })}
-          matches={matchesProviderFilter}
+          matches={matchesNameOrId}
           emptyMessage="該当するプロバイダがありません。"
           onSelect={(p) => {
             setProviderId(p.id);
@@ -197,11 +197,13 @@ export function AuthScreen({
   }
 
   const actions: SelectInputItem<string>[] = [];
-  if (selected.authType === "api_key") {
+  if (selected.authType === "api_key" || selected.authType === "both") {
     actions.push({ label: "APIキーを入力", value: "key" });
   }
-  if (selected.authType === "oauth" && selected.hasInteractiveLogin) {
-    actions.push({ label: "OAuth ログイン", value: "oauth" });
+  if (selected.authType === "oauth" || selected.authType === "both") {
+    if (selected.hasInteractiveLogin) {
+      actions.push({ label: "OAuth ログイン", value: "oauth" });
+    }
   }
   if (selected.configured) {
     actions.push({ label: "認証を解除", value: "logout" });
@@ -212,10 +214,16 @@ export function AuthScreen({
     <Box flexDirection="column">
       <Box flexDirection="row" alignItems="center">
         <Text bold>{selected.name}</Text>
-        <Box marginLeft={1}>
-          {selected.authType === "oauth"
-            ? <Badge color="cyan">OAuth</Badge>
-            : <Badge color="blue">APIキー</Badge>}
+        <Box marginLeft={1} flexDirection="row">
+          {(selected.authType === "oauth" || selected.authType === "both") && (
+            <Badge color="cyan">OAuth</Badge>
+          )}
+          {(selected.authType === "api_key" || selected.authType === "both") &&
+            (
+              <Box marginLeft={1}>
+                <Badge color="blue">APIキー</Badge>
+              </Box>
+            )}
         </Box>
         {selected.configured && (
           <Box marginLeft={1}>
