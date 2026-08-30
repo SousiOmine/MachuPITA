@@ -5,7 +5,7 @@ const LETTER_RE =
 
 export function isTranslatable(text: string): boolean {
   const trimmed = text.trim();
-  if (trimmed.length < 2) return false;
+  if (trimmed.length < 3) return false;
   if (!LETTER_RE.test(trimmed)) return false;
   const compact = trimmed.replace(/\s+/g, "");
   let letters = 0;
@@ -78,9 +78,36 @@ export function restorePlaceholders(
   return { text: out.replace(/\s+/g, " ").trim(), missingTokens: missing };
 }
 
+const MATH_OPERATOR_RE =
+  /[=≈≡≪≫≤≥≠∈∉∋⊂⊃⊆⊇∪∩∑∏∫√∂∇←→↔⇐⇒∝∀∃∅ℝℕℤ±∓×÷⊙⊕]/;
+
+/**
+ * 数式とみなせるかどうか。
+ * 数学演算子を含み、文としての終止符(ピリオド・句点など)を伴わない短いテキスト
+ * (例: "Attention(Q, K, V) = softmax(QK^T / √dk) V (1)")は翻訳せず原文を保持する。
+ */
+export function looksLikeFormula(text: string): boolean {
+  const t = text.trim();
+  // 分数・数式の断片(例: "QKT dk", "1 dk"): 母音を含まない短い記号片は数式とみなす
+  if (
+    t.length <= 8 && /^[A-Za-z0-9\s^_]+$/.test(t) &&
+    !/[aeiouAEIOU]/.test(t)
+  ) return true;
+  if (!MATH_OPERATOR_RE.test(t)) return false;
+  if (t.length > 300) return false;
+  // 文末の終止符、文中の文境界(「. + 大文字」)、CJKの句読点があれば本文とみなす
+  if (/[.!?。！？]["'」』）)]*\s*$/.test(t)) return false;
+  if (/[。！？]/.test(t)) return false;
+  if (/\.\s+[A-Z\u00C0-\u024F]/.test(t)) return false;
+  return true;
+}
+
 export function classifyBlocks(blocks: Block[]): void {
   for (const block of blocks) {
-    if (!isTranslatable(block.originalText)) {
+    if (
+      !isTranslatable(block.originalText) ||
+      looksLikeFormula(block.originalText)
+    ) {
       block.status = "skipped";
       block.kind = "nontranslatable";
     }

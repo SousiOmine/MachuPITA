@@ -1,6 +1,7 @@
 import { assertEquals } from "@std/assert";
 import {
   isTranslatable,
+  looksLikeFormula,
   protectPlaceholders,
   restorePlaceholders,
 } from "../engine/core/classify.ts";
@@ -46,4 +47,44 @@ Deno.test("restorePlaceholders reports missing tokens", () => {
   const { tokens } = protectPlaceholders("see [7] for details");
   const restored = restorePlaceholders("詳細は参照", tokens);
   assertEquals(restored.missingTokens.length, 1);
+});
+
+Deno.test("looksLikeFormula detects equations without sentence enders", () => {
+  assertEquals(
+    looksLikeFormula("Attention(Q, K, V) = softmax(QK^T / √dk) V (1)"),
+    true,
+  );
+  assertEquals(looksLikeFormula("x = y + z"), true);
+  assertEquals(looksLikeFormula("dq · dk = 1"), true);
+});
+
+Deno.test("looksLikeFormula keeps sentences and headings translatable", () => {
+  assertEquals(
+    looksLikeFormula(
+      "We compute the matrix of outputs as: Attention(Q, K, V) = softmax(...).",
+    ),
+    false,
+  );
+  assertEquals(
+    looksLikeFormula("The model achieves 28.4 BLEU on the benchmark."),
+    false,
+  );
+  assertEquals(looksLikeFormula("これは日本語の本文です。"), false);
+  assertEquals(looksLikeFormula("1 Introduction"), false);
+});
+
+Deno.test("filterVisibleItems drops items matching invisible origins", async () => {
+  const { filterVisibleItems } = await import("../engine/core/visibility.ts");
+  const items = [
+    { str: "visible", x: 100, y: 700, fontSize: 10 },
+    { str: "hidden label", x: 108, y: 668.5, fontSize: 19 },
+  ];
+  const filtered = filterVisibleItems(
+    items,
+    [{ x: 108.2, y: 668.3 }],
+  );
+  assertEquals(filtered.length, 1);
+  assertEquals(filtered[0].str, "visible");
+  // origins が空なら何も落ちない
+  assertEquals(filterVisibleItems(items, []).length, 2);
 });

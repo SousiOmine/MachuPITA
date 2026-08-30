@@ -1,5 +1,9 @@
 import { getDocumentProxy } from "unpdf";
 import type { ExtractedPage, TextItemBox } from "./types.ts";
+import {
+  filterVisibleItems,
+  findInvisibleTextOrigins,
+} from "./visibility.ts";
 
 export async function extractPages(
   input: Uint8Array,
@@ -14,6 +18,13 @@ export async function extractPages(
     const page = await pdf.getPage(i);
     const viewport = page.getViewport({ scale: 1 });
     const content = await page.getTextContent();
+    // 図の中に埋め込まれた不可視テキスト(クリップ外・白塗り等)を除外する
+    let invisibleOrigins: { x: number; y: number }[] = [];
+    try {
+      invisibleOrigins = await findInvisibleTextOrigins(page);
+    } catch {
+      // 検出に失敗した場合は除外せず続行
+    }
     const items: TextItemBox[] = [];
     for (const item of content.items) {
       if (!("str" in item)) continue;
@@ -35,7 +46,7 @@ export async function extractPages(
       pageNumber: i,
       width: viewport.width,
       height: viewport.height,
-      items,
+      items: filterVisibleItems(items, invisibleOrigins),
     });
     page.cleanup();
     onProgress?.(i, pdf.numPages);

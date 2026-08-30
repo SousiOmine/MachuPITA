@@ -17,6 +17,8 @@ export interface LineBox {
   text: string;
   fontSize: number;
   bold: boolean;
+  /** 行内大ギャップで分割したセル(著者グリッド・表・数式など)。セルは単独ブロック扱い */
+  cells?: LineBox[];
 }
 
 export type BlockKind = "body" | "heading" | "nontranslatable";
@@ -29,6 +31,8 @@ export interface Block {
   y0: number;
   x1: number;
   y1: number;
+  /** 先頭行のベースライン(PDF座標)。単一行ブロックの描画位置を原文に一致させる */
+  baselineY?: number;
   text: string;
   originalText: string;
   translation?: string;
