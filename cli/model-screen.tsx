@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { Box, SelectInput, Spinner, Text, useInput } from "@deno-ink/core";
-import type { SelectInputItem } from "@deno-ink/core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { AppCtx } from "./context.ts";
+import { matchesProviderFilter } from "./auth-screen.tsx";
+import { SearchableList } from "./searchable-list.tsx";
 
 interface ConfiguredProvider {
   id: string;
@@ -10,18 +11,17 @@ interface ConfiguredProvider {
   source?: string;
 }
 
-/** モデル選択画面のプロバイダ一覧 (認証済みのみ + 使用中マーク + 「← 戻る」)。 */
-export function buildModelProviderItems(
-  providers: Pick<ConfiguredProvider, "id" | "name">[],
-  currentProvider: string,
-): SelectInputItem<string>[] {
-  return [
-    ...providers.map((p) => ({
-      label: `${p.name}${p.id === currentProvider ? " (使用中)" : ""}`,
-      value: p.id,
-    })),
-    { label: "← 戻る", value: "__back" },
-  ];
+/** モデル絞り込み: 名前またはIDの部分一致 (大文字小文字を無視)。 */
+export function matchesModelFilter(
+  model: Pick<Model<Api>, "id" | "name">,
+  query: string,
+): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  return (
+    model.name.toLowerCase().includes(q) ||
+    model.id.toLowerCase().includes(q)
+  );
 }
 
 /** モデル選択画面: 認証済みプロバイダのモデルから選んで settings に保存する。 */
@@ -58,8 +58,14 @@ export function ModelScreen({
     })();
   }, [ctx]);
 
+  // 読み込み中・空の状態の Esc のみここで処理する
+  // (一覧表示中は SearchableList がクエリ解除と戻るを処理する)
   useInput((_input, key) => {
     if (!key.escape) return;
+    const listMounted =
+      (!providerId && providers !== null && providers.length > 0) ||
+      (providerId !== null && models !== null && models.length > 0);
+    if (listMounted) return;
     if (providerId) {
       setProviderId(null);
       setModels(null);
@@ -97,31 +103,36 @@ export function ModelScreen({
   }
 
   if (!providerId) {
-    const items = buildModelProviderItems(providers, current.provider);
     return (
       <Box flexDirection="column">
-        <Text bold>モデルを選択するプロバイダを選択</Text>
-        <Text dimColor>認証済みのプロバイダのみ表示しています。</Text>
-        {current.provider && (
-          <Text dimColor>
-            現在: {current.provider} / {current.model}
-          </Text>
-        )}
-        <SelectInput
-          items={items}
-          onSelect={(item) => {
-            if (item.value === "__back") {
-              onBack();
-              return;
-            }
+        <SearchableList
+          title="モデルを選択するプロバイダを選択"
+          description={
+            <>
+              <Text dimColor>認証済みのプロバイダのみ表示しています。</Text>
+              {current.provider && (
+                <Text dimColor>
+                  現在: {current.provider} / {current.model}
+                </Text>
+              )}
+            </>
+          }
+          rows={providers}
+          toItem={(p) => ({
+            label: `${p.name}${p.id === current.provider ? " (使用中)" : ""}`,
+            value: p.id,
+          })}
+          matches={matchesProviderFilter}
+          emptyMessage="該当するプロバイダがありません。"
+          onSelect={(p) => {
             setNotice("");
-            setProviderId(item.value);
+            setProviderId(p.id);
             setModels(null);
-            void ctx.piai.listModels(item.value).then(setModels);
+            void ctx.piai.listModels(p.id).then(setModels);
           }}
+          onBack={onBack}
         />
         {notice && <Text color="green">{notice}</Text>}
-        <Text dimColor>Esc で戻る</Text>
       </Box>
     );
   }
@@ -163,28 +174,32 @@ export function ModelScreen({
 
   const isCurrent = (m: { id: string }) =>
     current.provider === providerId && current.model === m.id;
-  const items: SelectInputItem<string>[] = models.map((m) => ({
-    label: `${m.name || m.id}${isCurrent(m) ? " (使用中)" : ""}`,
-    value: m.id,
-  }));
   return (
     <Box flexDirection="column">
-      <Text bold>{provider.name} のモデルを選択</Text>
-      <SelectInput
-        items={items}
-        onSelect={async (item) => {
+      <SearchableList
+        title={`${provider.name} のモデルを選択`}
+        rows={models}
+        toItem={(m) => ({
+          label: `${m.name || m.id}${isCurrent(m) ? " (使用中)" : ""}`,
+          value: m.id,
+        })}
+        matches={matchesModelFilter}
+        emptyMessage="該当するモデルがありません。"
+        onSelect={async (m) => {
           await ctx.settings.update({
             provider: providerId,
-            model: item.value,
+            model: m.id,
           });
-          setCurrent({ provider: providerId, model: item.value });
-          setNotice(`${provider.name}: ${item.value} を選択しました`);
+          setCurrent({ provider: providerId, model: m.id });
+          setNotice(`${provider.name}: ${m.id} を選択しました`);
+          setProviderId(null);
+          setModels(null);
+        }}
+        onBack={() => {
           setProviderId(null);
           setModels(null);
         }}
       />
-      {notice && <Text color="green">{notice}</Text>}
-      <Text dimColor>Esc でプロバイダ一覧へ</Text>
     </Box>
   );
 }

@@ -1,11 +1,8 @@
 import { assert, assertEquals, assertExists, assertFalse } from "@std/assert";
 import { join } from "@std/path";
 import { parseArgs } from "../cli/run.ts";
-import {
-  buildProviderItems,
-  matchesProviderFilter,
-} from "../cli/auth-screen.tsx";
-import { buildModelProviderItems } from "../cli/model-screen.tsx";
+import { matchesProviderFilter } from "../cli/auth-screen.tsx";
+import { matchesModelFilter } from "../cli/model-screen.tsx";
 import { PROJECT_ROOT } from "../engine/settings.ts";
 import { createFixturePdf } from "./helpers.ts";
 
@@ -25,53 +22,18 @@ Deno.test("provider filter: 名前とIDの部分一致で絞り込む", () => {
   assert(matchesProviderFilter(p, ""), "空クエリは全件一致");
 });
 
-Deno.test("provider list: 絞り込み結果の先頭が検索候補になり、戻るは常に末尾", () => {
-  const providers = [
-    {
-      id: "bedrock",
-      name: "Amazon Bedrock",
-      authType: "api_key" as const,
-      configured: false,
-    },
-    {
-      id: "antling",
-      name: "Ant Ling",
-      authType: "api_key" as const,
-      configured: false,
-    },
-    {
-      id: "anthropic",
-      name: "Anthropic",
-      authType: "api_key" as const,
-      configured: true,
-    },
-  ];
-  assertEquals(
-    buildProviderItems(providers, "ant").map((i) => i.value),
-    ["antling", "anthropic", "__back"],
+Deno.test("model filter: 名前とIDの部分一致で絞り込む", () => {
+  const m = { id: "claude-3-5-sonnet", name: "Claude 3.5 Sonnet" };
+  assert(matchesModelFilter(m, "claude"));
+  assert(matchesModelFilter(m, "SONNET"));
+  assert(matchesModelFilter(m, "sonn"));
+  assert(matchesModelFilter(m, "  claude  "), "前後空白は無視する");
+  assert(
+    matchesModelFilter({ id: "gpt-4o", name: "GPT-4o" }, "gpt-4o"),
+    "IDでも引ける",
   );
-  const all = buildProviderItems(providers, "");
-  assertEquals(all[all.length - 1].value, "__back");
-  assertEquals(all.length, providers.length + 1);
-  assertEquals(
-    buildProviderItems(providers, "zzz").map((i) => i.value),
-    ["__back"],
-  );
-});
-
-Deno.test("model list: 使用中プロバイダにマークが付き、戻るは末尾", () => {
-  const providers = [
-    { id: "anthropic", name: "Anthropic" },
-    { id: "openai", name: "OpenAI" },
-  ];
-  assertEquals(
-    buildModelProviderItems(providers, "openai").map((i) => i.label),
-    ["Anthropic", "OpenAI (使用中)", "← 戻る"],
-  );
-  assertEquals(
-    buildModelProviderItems(providers, "").map((i) => i.label),
-    ["Anthropic", "OpenAI", "← 戻る"],
-  );
+  assert(!matchesModelFilter(m, "gpt"));
+  assert(matchesModelFilter(m, ""), "空クエリは全件一致");
 });
 
 Deno.test("parseArgs: PDFパスとフラグを解釈する", () => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Badge,
   Box,
@@ -11,6 +11,7 @@ import {
 import type { SelectInputItem } from "@deno-ink/core";
 import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
 import type { AppCtx } from "./context.ts";
+import { SearchableList } from "./searchable-list.tsx";
 
 interface ProviderRow {
   id: string;
@@ -36,28 +37,6 @@ export function matchesProviderFilter(
   );
 }
 
-/** プロバイダ一覧の表示行数上限 (超過分はスクロールで表示)。 */
-const PROVIDER_LIST_LIMIT = 10;
-
-/** プロバイダ一覧の表示項目 (絞り込み済みリスト + 「← 戻る」)。 */
-export function buildProviderItems(
-  providers: Pick<ProviderRow, "id" | "name" | "authType" | "configured">[],
-  query: string,
-): SelectInputItem<string>[] {
-  const q = query.trim().toLowerCase();
-  const filtered = q
-    ? providers.filter((p) => matchesProviderFilter(p, q))
-    : providers;
-  return [
-    ...filtered.map((p) => ({
-      label: `${p.name} [${p.authType === "oauth" ? "OAuth" : "APIキー"}]` +
-        (p.configured ? " ✓接続済み" : " 未設定"),
-      value: p.id,
-    })),
-    { label: "← 戻る", value: "__back" },
-  ];
-}
-
 export function AuthScreen({
   ctx,
   onBack,
@@ -72,12 +51,6 @@ export function AuthScreen({
   const [promptAnswer, setPromptAnswer] = useState("");
   const [notice, setNotice] = useState("");
   const [tick, setTick] = useState(0);
-  const [filterQuery, setFilterQuery] = useState("");
-  const [listIndex, setListIndex] = useState(0);
-  const queryRef = useRef("");
-  const indexRef = useRef(0);
-  const providersRef = useRef(providers);
-  providersRef.current = providers;
 
   const reload = useCallback(async () => {
     const statuses = await ctx.piai.listAuthStatuses();
@@ -118,11 +91,10 @@ export function AuthScreen({
     }
   }, [view, providerId, tick]);
 
-  // 各画面のキー操作 (Esc で戻る / OAuth 中断 / プロバイダ一覧の絞り込みと選択)
-  // 一覧操作は ref を介して最新状態を参照する (同一入力バースト内の連続キーでも
-  // stale な state を参照しないため。SelectInput では絞り込み前のリストが
-  // Enter に使われて先頭プロバイダを選んでしまう問題があった)
-  useInput((input, key) => {
+  // 各画面のキー操作 (Esc で戻る / OAuth 中断)
+  // プロバイダ一覧の絞り込みと選択は SearchableList が処理する
+  useInput((_input, key) => {
+    if (view === "list") return;
     if (view === "oauth" && providerId) {
       if (key.escape) {
         ctx.piai.cancelLogin(providerId);
@@ -139,124 +111,33 @@ export function AuthScreen({
       if (key.escape) {
         setProviderId(null);
         setView("list");
-        indexRef.current = 0;
-        setListIndex(0);
       }
       return;
-    }
-    if (view !== "list") return;
-
-    const items = buildProviderItems(providersRef.current, queryRef.current);
-
-    if (key.escape) {
-      if (queryRef.current) {
-        queryRef.current = "";
-        setFilterQuery("");
-      } else {
-        onBack();
-      }
-      indexRef.current = 0;
-      setListIndex(0);
-      return;
-    }
-    if (key.backspace) {
-      queryRef.current = queryRef.current.slice(0, -1);
-      setFilterQuery(queryRef.current);
-      indexRef.current = 0;
-      setListIndex(0);
-      return;
-    }
-    if (key.upArrow) {
-      indexRef.current = items.length === 0
-        ? 0
-        : (indexRef.current - 1 + items.length) % items.length;
-      setListIndex(indexRef.current);
-      return;
-    }
-    if (key.downArrow) {
-      indexRef.current = items.length === 0
-        ? 0
-        : (indexRef.current + 1) % items.length;
-      setListIndex(indexRef.current);
-      return;
-    }
-    if (key.return) {
-      const item = items[indexRef.current] ?? items[0];
-      if (!item) return;
-      if (item.value === "__back") {
-        onBack();
-      } else {
-        setProviderId(item.value);
-        queryRef.current = "";
-        setFilterQuery("");
-        indexRef.current = 0;
-        setListIndex(0);
-        setNotice("");
-        setView("actions");
-      }
-      return;
-    }
-    if (input && !key.ctrl && !key.meta) {
-      queryRef.current += input;
-      setFilterQuery(queryRef.current);
-      indexRef.current = 0;
-      setListIndex(0);
     }
   });
 
   const selected = providers.find((p) => p.id === providerId);
 
   if (view === "list") {
-    const items = buildProviderItems(providers, filterQuery);
-    // 選択項目を中央に保つように表示範囲を決める (一覧が縦に伸びないよう上限で切る)
-    const sel = Math.min(listIndex, Math.max(0, items.length - 1));
-    const maxOffset = Math.max(0, items.length - PROVIDER_LIST_LIMIT);
-    const scrollOffset = Math.min(
-      maxOffset,
-      Math.max(0, sel - Math.floor((PROVIDER_LIST_LIMIT - 1) / 2)),
-    );
-    const visible = items.slice(
-      scrollOffset,
-      scrollOffset + PROVIDER_LIST_LIMIT,
-    );
-    const hasMoreUp = scrollOffset > 0;
-    const hasMoreDown = scrollOffset + PROVIDER_LIST_LIMIT < items.length;
-    const providerCount = filterQuery
-      ? providers.filter((p) => matchesProviderFilter(p, filterQuery)).length
-      : providers.length;
     return (
       <Box flexDirection="column">
-        <Text bold>プロバイダを選択 ({providerCount} 件)</Text>
-        <Box flexDirection="row">
-          <Text color="cyan" bold>検索:</Text>
-          {filterQuery
-            ? <Text>{filterQuery}</Text>
-            : <Text dimColor>文字入力で絞り込み</Text>}
-        </Box>
-        {items.length === 1 && filterQuery && (
-          <Text dimColor>該当するプロバイダがありません。</Text>
-        )}
-        {hasMoreUp && <Text dimColor>...</Text>}
-        {visible.map((item, i) => {
-          const isSelected = scrollOffset + i === sel;
-          return (
-            <Box key={item.value} flexDirection="row">
-              <Box marginRight={1}>
-                <Text color={isSelected ? "cyan" : undefined}>
-                  {isSelected ? ">" : " "}
-                </Text>
-              </Box>
-              <Text color={isSelected ? "cyan" : undefined}>
-                {item.label}
-              </Text>
-            </Box>
-          );
-        })}
-        {hasMoreDown && <Text dimColor>...</Text>}
-        <Text dimColor>
-          文字入力で絞り込み / ↑↓ 選択 / Enter 決定 / Backspace 編集 / Esc
-          解除・戻る
-        </Text>
+        <SearchableList
+          title="プロバイダを選択"
+          rows={providers}
+          toItem={(p) => ({
+            label: `${p.name} [${p.authType === "oauth" ? "OAuth" : "APIキー"}]` +
+              (p.configured ? " ✓接続済み" : " 未設定"),
+            value: p.id,
+          })}
+          matches={matchesProviderFilter}
+          emptyMessage="該当するプロバイダがありません。"
+          onSelect={(p) => {
+            setProviderId(p.id);
+            setNotice("");
+            setView("actions");
+          }}
+          onBack={onBack}
+        />
       </Box>
     );
   }
