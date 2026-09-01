@@ -253,11 +253,18 @@ export function buildOptions(
 // 失敗しても進行は止めず、翻訳時に engine 側のエラーメッセージに任せる。
 async function ensureFontsAvailable(fontsDir: string): Promise<void> {
   try {
-    const downloaded = await ensureFonts(fontsDir);
+    const { downloaded, converted } = await ensureFonts(fontsDir);
     if (downloaded.length > 0) {
       console.log(
         `フォントをダウンロードしました: ${
           downloaded.map((t) => t.out).join(", ")
+        }`,
+      );
+    }
+    if (converted.length > 0) {
+      console.log(
+        `フォントを TrueType に変換しました: ${
+          converted.map((t) => t.out).join(", ")
         }`,
       );
     }

@@ -6,11 +6,14 @@ import { PROJECT_ROOT } from "../engine/settings.ts";
 if (import.meta.main) {
   const fontsDir = join(PROJECT_ROOT, "assets", "fonts");
   try {
-    const downloaded = await ensureFonts(fontsDir);
-    if (downloaded.length === 0) {
+    const { downloaded, converted } = await ensureFonts(fontsDir);
+    if (downloaded.length === 0 && converted.length === 0) {
       console.log("all fonts are present, skipping");
     } else {
       for (const target of downloaded) console.log(`saved ${target.out}`);
+      for (const target of converted) {
+        console.log(`converted ${target.out} to TrueType`);
+      }
     }
   } catch (err) {
     console.error(
