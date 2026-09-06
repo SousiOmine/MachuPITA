@@ -277,13 +277,38 @@ export interface TranslateProgress {
   onUsage?: (usage: TokenUsageTotals) => void;
 }
 
+/** 翻訳バッチの最大試行回数。初回1回 + 最大3回リトライ。 */
+export const TRANSLATE_MAX_ATTEMPTS = 4;
+/** 翻訳リトライ前に待機するミリ秒。 */
+export const TRANSLATE_RETRY_DELAY_MS = 3000;
+
+/** 中止を検知できる待機。待機中に中止されたら AbortError を投げる。 */
+function sleepWithAbort(ms: number, signal: AbortSignal): Promise<void> {
+  if (ms <= 0) return Promise.resolve();
+  if (signal.aborted) {
+    return Promise.reject(new DOMException("aborted", "AbortError"));
+  }
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException("aborted", "AbortError"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 export async function translateBlocks(
   blocks: Block[],
   translator: Translator,
   options: TranslateJobOptions,
   signal: AbortSignal,
   progress: TranslateProgress = {},
-  maxAttempts = 3,
+  maxAttempts = TRANSLATE_MAX_ATTEMPTS,
+  retryDelayMs = TRANSLATE_RETRY_DELAY_MS,
 ): Promise<void> {
   const pending = blocks.filter((b) => b.status === "pending");
   for (const block of pending) {
@@ -323,6 +348,7 @@ export async function translateBlocks(
         signal,
         progress,
         maxAttempts,
+        retryDelayMs,
       );
     }
   }
@@ -340,6 +366,7 @@ async function runBatchWithRetry(
   signal: AbortSignal,
   progress: TranslateProgress,
   maxAttempts: number,
+  retryDelayMs: number,
 ): Promise<void> {
   let lastError: unknown = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -374,7 +401,13 @@ async function runBatchWithRetry(
       if (err instanceof Error && err.name === "AbortError") {
         throw err;
       }
+      if (signal.aborted) {
+        throw new DOMException("aborted", "AbortError");
+      }
       lastError = err;
+      if (attempt < maxAttempts) {
+        await sleepWithAbort(retryDelayMs, signal);
+      }
     }
   }
   void lastError;
