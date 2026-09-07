@@ -49,6 +49,32 @@ Deno.test("restorePlaceholders reports missing tokens", () => {
   assertEquals(restored.missingTokens.length, 1);
 });
 
+Deno.test("restorePlaceholders tolerates collapsed placeholder spellings", () => {
+  const { tokens } = protectPlaceholders("see [7] for details");
+  for (
+    const variant of [
+      "詳細は参照 [M0]",
+      "詳細は参照 ［［Ｍ０］］",
+      "詳細は参照 `[[M0]]`",
+      "詳細は参照 [[m0]]",
+      "詳細は参照 [[M00]]",
+    ]
+  ) {
+    const restored = restorePlaceholders(variant, tokens);
+    assertEquals(restored.missingTokens.length, 0, variant);
+    assertEquals(restored.text.includes("[7]"), true, variant);
+  }
+});
+
+Deno.test("restorePlaceholders drops hallucinated placeholders", () => {
+  const { tokens } = protectPlaceholders("see [7] for details");
+  const restored = restorePlaceholders("訳 [[M0]] と [[M5]] と [M9]", tokens);
+  assertEquals(restored.missingTokens.length, 0);
+  assertEquals(restored.text.includes("[7]"), true);
+  assertEquals(restored.text.includes("M5"), false);
+  assertEquals(restored.text.includes("M9"), false);
+});
+
 Deno.test("looksLikeFormula detects equations without sentence enders", () => {
   assertEquals(
     looksLikeFormula("Attention(Q, K, V) = softmax(QK^T / √dk) V (1)"),

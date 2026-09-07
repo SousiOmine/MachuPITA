@@ -57,23 +57,61 @@ export interface RestoreResult {
   missingTokens: string[];
 }
 
+/** 全角数字1文字を ASCII 数字に変換する。数字以外は null を返す。 */
+function toAsciiDigit(ch: string): string | null {
+  const cp = ch.codePointAt(0);
+  if (cp === undefined) return null;
+  if (cp >= 0xFF10 && cp <= 0xFF19) {
+    return String.fromCharCode(cp - 0xFF10 + 0x30);
+  }
+  if (ch >= "0" && ch <= "9") return ch;
+  return null;
+}
+
+/** プレースホルダ番号文字列(全角・先行ゼロ許容)を数値化する。 */
+function parsePlaceholderNumber(raw: string): number | null {
+  let ascii = "";
+  for (const ch of raw) {
+    const d = toAsciiDigit(ch);
+    if (d === null) return null;
+    ascii += d;
+  }
+  if (ascii === "") return null;
+  const n = Number.parseInt(ascii, 10);
+  return Number.isSafeInteger(n) ? n : null;
+}
+
 export function restorePlaceholders(
   text: string,
   tokens: string[],
 ): RestoreResult {
   let out = text;
+  const used = new Set<number>();
+  // LLM が崩しがちな表記([[M0]] → [M0] / 全角 / 前後の引用符・バッククォート等)を
+  // 許容する。二重括弧を先に処理し、残った単括弧を拾う。
+  const doubleRe =
+    /(?:[`'"*_~]+\s*)?(?:\[\s*\[|\uFF3B\s*\uFF3B|【)\s*[Mm\uFF2D\uFF4D]\s*([0-9\uFF10-\uFF19]+)\s*(?:\]\s*\]|\uFF3D\s*\uFF3D|】)(?:\s*[`'"*_~]+)?/g;
+  out = out.replace(doubleRe, (_m, numStr: string) => {
+    const n = parsePlaceholderNumber(numStr);
+    if (n !== null && n >= 0 && n < tokens.length && !used.has(n)) {
+      used.add(n);
+      return tokens[n];
+    }
+    return "";
+  });
+  const singleRe =
+    /(?:[`'"*_~]+\s*)?(?:\[|\uFF3B|【)\s*[Mm\uFF2D\uFF4D]\s*([0-9\uFF10-\uFF19]+)\s*(?:\]|\uFF3D|】)(?:\s*[`'"*_~]+)?/g;
+  out = out.replace(singleRe, (_m, numStr: string) => {
+    const n = parsePlaceholderNumber(numStr);
+    if (n !== null && n >= 0 && n < tokens.length && !used.has(n)) {
+      used.add(n);
+      return tokens[n];
+    }
+    return "";
+  });
   const missing: string[] = [];
   for (let i = 0; i < tokens.length; i++) {
-    const re = new RegExp(`\\[\\[\\s*M${i}\\s*\\]\\]`);
-    if (re.test(out)) {
-      out = out.replace(re, tokens[i]);
-    } else {
-      missing.push(tokens[i]);
-    }
-  }
-  const stray = out.match(/\[\[\s*M\d+\s*\]\]/g);
-  for (const s of stray ?? []) {
-    out = out.replace(s, "");
+    if (!used.has(i)) missing.push(tokens[i]);
   }
   return { text: out.replace(/\s+/g, " ").trim(), missingTokens: missing };
 }

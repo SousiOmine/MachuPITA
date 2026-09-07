@@ -224,23 +224,46 @@ export class PiTranslator implements Translator, GlossaryCapable {
   }
 }
 
+/** バッチIDの揺れ(前後空白・大文字・_/-・ダッシュ種・文中空白)を吸収する。 */
+export function normalizeBatchId(id: string): string {
+  return id.trim().toLowerCase().replace(/_/g, "-").replace(
+    /[–—−‐ｰ―]/g,
+    "-",
+  ).replace(/\s+/g, "");
+}
+
+/** 応答配列から期待IDに対応する項目を探す。ID正規化で照合し、重複は先勝ち。 */
+function findResultForId(
+  results: BatchResult[],
+  expectedId: string,
+): BatchResult | undefined {
+  const want = normalizeBatchId(expectedId);
+  return results.find((r) => normalizeBatchId(r.id) === want);
+}
+
 export function parseBatchResponse(
   raw: string,
   expected: BatchItem[],
 ): BatchResult[] {
   const parsed = extractJsonArray(raw);
+  const byNorm = new Map(expected.map((e) => [normalizeBatchId(e.id), e.id]));
   const results: BatchResult[] = [];
+  const seen = new Set<string>();
   for (const entry of parsed) {
     if (
       entry && typeof entry === "object" && "id" in entry &&
       "translation" in entry
     ) {
-      const id = String((entry as Record<string, unknown>).id);
-      const translation = String(
-        (entry as Record<string, unknown>).translation ?? "",
-      );
-      if (expected.some((e) => e.id === id)) {
-        results.push({ id, translation });
+      const rawId = String((entry as Record<string, unknown>).id);
+      const canonical = byNorm.get(normalizeBatchId(rawId));
+      if (canonical && !seen.has(canonical)) {
+        seen.add(canonical);
+        results.push({
+          id: canonical,
+          translation: String(
+            (entry as Record<string, unknown>).translation ?? "",
+          ),
+        });
       }
     }
   }
@@ -368,35 +391,108 @@ async function runBatchWithRetry(
   maxAttempts: number,
   retryDelayMs: number,
 ): Promise<void> {
+  // 初回はバッチ全体、2回目以降は未完項目を1件ずつ再要求する。項目欠落・
+  // プレースホルダ欠落・空訳は例外と同様に再試行対象とし、全試行後も残った
+  // 欠落プレースホルダは文末補完で情報落ちを防ぐ。
+  let remaining: BatchItem[] = [...batch];
+  const lastPartial = new Map<string, { text: string; missing: string[] }>();
+  const failureKind = new Map<string, "missing" | "error">();
   let lastError: unknown = null;
+
+  const succeed = (itemId: string, text: string): void => {
+    const block = byId.get(itemId);
+    if (!block) return;
+    block.translation = text;
+    block.status = "translated";
+    progress.onBlockDone?.(itemId, true);
+  };
+
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (remaining.length === 0) break;
+    if (signal.aborted) throw new DOMException("aborted", "AbortError");
     try {
-      const results = await translator.translateBatch(batch, signal);
-      for (const item of batch) {
-        const block = byId.get(item.id);
-        if (!block) continue;
-        const result = results.find((r) => r.id === item.id);
-        if (!result) {
-          block.status = "failed";
-          block.warnings = ["翻訳応答に項目が含まれず原文を保持しました"];
-          progress.onBlockDone?.(item.id, false);
-          continue;
+      if (attempt === 1) {
+        const results = await translator.translateBatch(remaining, signal);
+        const next: BatchItem[] = [];
+        for (const item of remaining) {
+          const block = byId.get(item.id);
+          if (!block) continue;
+          const result = findResultForId(results, item.id);
+          if (!result || result.translation.trim() === "") {
+            failureKind.set(item.id, "missing");
+            next.push(item);
+            continue;
+          }
+          const restored = restorePlaceholders(
+            result.translation,
+            block.protectedTokens ?? [],
+          );
+          if (restored.missingTokens.length > 0) {
+            lastPartial.set(item.id, {
+              text: restored.text,
+              missing: restored.missingTokens,
+            });
+            next.push(item);
+            continue;
+          }
+          lastPartial.delete(item.id);
+          failureKind.delete(item.id);
+          succeed(item.id, restored.text);
         }
-        const restored = restorePlaceholders(
-          result.translation,
-          block.protectedTokens ?? [],
-        );
-        if (restored.missingTokens.length > 0) {
-          block.warnings = [
-            `プレースホルダが欠落: ${restored.missingTokens.join(", ")}`,
-          ];
+        remaining = next;
+        if (remaining.length === 0) {
+          progress.onUsage?.(translator.usage());
+          return;
         }
-        block.translation = restored.text;
-        block.status = "translated";
-        progress.onBlockDone?.(item.id, true);
+        if (attempt < maxAttempts) {
+          await sleepWithAbort(retryDelayMs, signal);
+        }
+      } else {
+        const next: BatchItem[] = [];
+        for (const item of remaining) {
+          if (signal.aborted) throw new DOMException("aborted", "AbortError");
+          try {
+            const single = await translator.translateBatch([item], signal);
+            const block = byId.get(item.id);
+            if (!block) continue;
+            const result = findResultForId(single, item.id);
+            if (!result || result.translation.trim() === "") {
+              failureKind.set(item.id, "missing");
+              next.push(item);
+              continue;
+            }
+            const restored = restorePlaceholders(
+              result.translation,
+              block.protectedTokens ?? [],
+            );
+            if (restored.missingTokens.length > 0) {
+              lastPartial.set(item.id, {
+                text: restored.text,
+                missing: restored.missingTokens,
+              });
+              next.push(item);
+              continue;
+            }
+            lastPartial.delete(item.id);
+            failureKind.delete(item.id);
+            succeed(item.id, restored.text);
+          } catch (err) {
+            if (err instanceof Error && err.name === "AbortError") throw err;
+            if (signal.aborted) throw new DOMException("aborted", "AbortError");
+            lastError = err;
+            failureKind.set(item.id, "error");
+            next.push(item);
+          }
+        }
+        remaining = next;
+        if (remaining.length === 0) {
+          progress.onUsage?.(translator.usage());
+          return;
+        }
+        if (attempt < maxAttempts) {
+          await sleepWithAbort(retryDelayMs, signal);
+        }
       }
-      progress.onUsage?.(translator.usage());
-      return;
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
         throw err;
@@ -405,17 +501,36 @@ async function runBatchWithRetry(
         throw new DOMException("aborted", "AbortError");
       }
       lastError = err;
+      for (const item of remaining) {
+        if (!lastPartial.has(item.id)) failureKind.set(item.id, "error");
+      }
       if (attempt < maxAttempts) {
         await sleepWithAbort(retryDelayMs, signal);
       }
     }
   }
   void lastError;
-  for (const item of batch) {
+  for (const item of remaining) {
     const block = byId.get(item.id);
     if (!block) continue;
+    const partial = lastPartial.get(item.id);
+    if (partial) {
+      block.translation = partial.missing.length > 0
+        ? `${partial.text} ${partial.missing.join(" ")}`.trim()
+        : partial.text;
+      block.status = "translated";
+      block.warnings = [
+        `プレースホルダが欠落したため文末に補完: ${partial.missing.join(", ")}`,
+      ];
+      progress.onBlockDone?.(item.id, true);
+      continue;
+    }
     block.status = "failed";
-    block.warnings = ["翻訳に失敗したため原文を保持しました"];
+    block.warnings = [
+      failureKind.get(item.id) === "error"
+        ? "翻訳に失敗したため原文を保持しました"
+        : "翻訳応答に項目が含まれず原文を保持しました",
+    ];
     progress.onBlockDone?.(item.id, false);
   }
   progress.onUsage?.(translator.usage());

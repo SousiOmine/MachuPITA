@@ -6,6 +6,7 @@ import {
   type GlossaryCapable,
   isGlossaryCapable,
   isJapaneseTarget,
+  normalizeBatchId,
   parseBatchResponse,
   translateBlocks,
   type Translator,
@@ -159,4 +160,107 @@ Deno.test("isGlossaryCapable: 用語集対応の翻訳器のみ true を返す",
     withGlossary: (_entries) => withGlossary,
   };
   assert(isGlossaryCapable(withGlossary), "用語集対応は true");
+});
+
+Deno.test("normalizeBatchId: IDの揺れを吸収する", () => {
+  assertEquals(normalizeBatchId("p9-11"), "p9-11");
+  assertEquals(normalizeBatchId(" P9-11 "), "p9-11");
+  assertEquals(normalizeBatchId("p9_11"), "p9-11");
+  assertEquals(normalizeBatchId("p9–11"), "p9-11");
+  assertEquals(normalizeBatchId("p9 - 11"), "p9-11");
+});
+
+Deno.test("parseBatchResponse normalizes ids and dedupes", () => {
+  const raw =
+    '[{"id":" P9-11 ","translation":"a"},{"id":"p9_4","translation":"b"},{"id":"p9-11","translation":"dup"}]';
+  const result = parseBatchResponse(raw, [
+    { id: "p9-11", text: "x" },
+    { id: "p9-4", text: "y" },
+  ]);
+  assertEquals(result.length, 2);
+  assertEquals(result.find((r) => r.id === "p9-11")?.translation, "a");
+  assertEquals(result.find((r) => r.id === "p9-4")?.translation, "b");
+});
+
+Deno.test("translateBlocks retries a missing id with a single-item request", async () => {
+  const blocks = [
+    makeBlock("b1", "First paragraph about Emilia dataset."),
+    makeBlock("b2", "Second paragraph about speech generation."),
+  ];
+  let calls = 0;
+  const translator: Translator = {
+    async translateBatch(items: BatchItem[]): Promise<BatchResult[]> {
+      calls++;
+      if (items.length > 1) {
+        // 初回バッチでは b2 を欠落させる
+        return [{ id: "b1", translation: "訳:b1" }];
+      }
+      return items.map((i) => ({ id: i.id, translation: `訳:${i.id}` }));
+    },
+    usage: () => ({ input: 0, output: 0, total: 0, costTotal: 0 }),
+  };
+  const done: string[] = [];
+  await translateBlocks(
+    blocks,
+    translator,
+    { targetLanguage: "日本語", batchSizeChars: 3000, concurrency: 1 },
+    new AbortController().signal,
+    { onBlockDone: (id) => done.push(id) },
+    4,
+    0,
+  );
+  assertEquals(blocks[0].status, "translated");
+  assertEquals(blocks[1].status, "translated");
+  assertEquals(blocks[1].translation, "訳:b2");
+  assert(calls >= 2, `expected retry, got ${calls} calls`);
+  assertEquals(done.length, 2);
+});
+
+Deno.test("translateBlocks retries placeholder loss and recovers", async () => {
+  const blocks = [makeBlock("b1", "Sampled from AISHELL-3 dataset [17].")];
+  let calls = 0;
+  const translator: Translator = {
+    async translateBatch(items: BatchItem[]): Promise<BatchResult[]> {
+      calls++;
+      if (calls === 1) return [{ id: items[0].id, translation: "訳文のみ" }];
+      return [{ id: items[0].id, translation: "訳文 [[M0]] 付き" }];
+    },
+    usage: () => ({ input: 0, output: 0, total: 0, costTotal: 0 }),
+  };
+  await translateBlocks(
+    blocks,
+    translator,
+    { targetLanguage: "日本語", batchSizeChars: 3000, concurrency: 1 },
+    new AbortController().signal,
+    {},
+    4,
+    0,
+  );
+  assertEquals(blocks[0].status, "translated");
+  assertEquals(blocks[0].translation?.includes("[17]"), true);
+  assertEquals(blocks[0].warnings, undefined);
+  assert(calls >= 2, `expected retry, got ${calls} calls`);
+});
+
+Deno.test("translateBlocks appends persistently missing placeholders at the end", async () => {
+  const blocks = [makeBlock("b1", "Sampled from AISHELL-3 dataset [17].")];
+  const translator: Translator = {
+    async translateBatch(items: BatchItem[]): Promise<BatchResult[]> {
+      return items.map((i) => ({ id: i.id, translation: "訳文のみ" }));
+    },
+    usage: () => ({ input: 0, output: 0, total: 0, costTotal: 0 }),
+  };
+  await translateBlocks(
+    blocks,
+    translator,
+    { targetLanguage: "日本語", batchSizeChars: 3000, concurrency: 1 },
+    new AbortController().signal,
+    {},
+    2,
+    0,
+  );
+  assertEquals(blocks[0].status, "translated");
+  assertEquals(blocks[0].translation?.includes("[17]"), true);
+  assertEquals(blocks[0].warnings?.length ?? 0, 1);
+  assertEquals(blocks[0].warnings?.[0].includes("文末に補完"), true);
 });
