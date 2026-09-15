@@ -1,15 +1,13 @@
-import { assertEquals } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
 import {
-  appendGlossary,
   buildGlossarySystemPrompt,
+  buildGlossaryUserPrompt,
   collectGlossaryTexts,
   extractGlossary,
-  type GlossaryEntry,
   mergeGlossary,
   parseGlossaryResponse,
   sampleTexts,
 } from "../engine/core/glossary.ts";
-import { buildSystemPrompt } from "../engine/core/translate.ts";
 import type { Block } from "../engine/core/types.ts";
 
 Deno.test("parseGlossaryResponse extracts entries from noisy output", () => {
@@ -48,46 +46,66 @@ Deno.test("mergeGlossary dedupes case-insensitively with last wins", () => {
   assertEquals(merged[0].target, "注意機構");
 });
 
-Deno.test("appendGlossary embeds entries and keeps base prompt intact", () => {
-  const base = buildSystemPrompt("日本語");
-  const entries: GlossaryEntry[] = [
-    { source: "attention mechanism", target: "注意機構" },
-    { source: "MachuPITA", target: "MachuPITA" },
-  ];
-  const appended = appendGlossary(base, entries);
-  assertEquals(appended.startsWith(base), true);
-  assertEquals(appended.includes("- attention mechanism => 注意機構"), true);
-  assertEquals(appended.includes("- MachuPITA => MachuPITA"), true);
-  assertEquals(appendGlossary(base, []), base);
+Deno.test("buildGlossarySystemPrompt: 用語集作成者の役割のみを定義する", () => {
+  const system = buildGlossarySystemPrompt();
+  assertEquals(
+    system,
+    "You are a terminology specialist who builds translation glossaries for academic papers.",
+  );
+  // 抽出条件・出力形式は user ロール側に置く
+  assertEquals(system.includes("<target>"), false);
+  assertEquals(system.includes("JSON"), false);
 });
+
+Deno.test("buildGlossaryUserPrompt: 対象言語と <target> ブロックを埋め込む", () => {
+  const user = buildGlossaryUserPrompt(["alpha text", "beta text"], "日本語");
+  assert(
+    user.startsWith(
+      "Read the text segments sampled from a PDF academic paper, stored as a JSON array inside the <target> tags below, and build a glossary for a translation into 日本語.",
+    ),
+    user,
+  );
+  assert(user.includes('{"source": string, "target": string}'));
+  assert(user.includes('<target>\n["alpha text","beta text"]\n</target>'));
+});
+
+/** user プロンプトの <target> ブロック(セグメントの JSON 配列)を取り出す。 */
+function targetBlock(user: string): string[] {
+  const match = /<target>\n([\s\S]*?)\n<\/target>/.exec(user);
+  if (!match) throw new Error("no <target> block in user prompt");
+  return JSON.parse(match[1]) as string[];
+}
 
 Deno.test("extractGlossary chunks texts, calls LLM per chunk and merges", async () => {
   const systemCalls: string[] = [];
-  const userCalls: string[][] = [];
+  const userCalls: string[] = [];
   const call = (system: string, user: string, _signal: AbortSignal) => {
     systemCalls.push(system);
-    userCalls.push(JSON.parse(user));
-    const texts = JSON.parse(user) as string[];
+    userCalls.push(user);
     return Promise.resolve(JSON.stringify(
-      texts.map((t) => ({ source: `term ${t.slice(0, 3)}`, target: "訳" })),
+      targetBlock(user).map((t) => ({
+        source: `term ${t.slice(0, 3)}`,
+        target: "訳",
+      })),
     ));
   };
+  const texts = ["alpha text", "beta text", "gamma text"];
   const entries = await extractGlossary(
     call,
-    ["alpha text", "beta text", "gamma text"],
-    buildGlossarySystemPrompt("日本語"),
+    texts,
+    "日本語",
     new AbortController().signal,
   );
-  assertEquals(systemCalls[0], buildGlossarySystemPrompt("日本語"));
+  assertEquals(systemCalls[0], buildGlossarySystemPrompt());
   assertEquals(userCalls.length, 1);
+  assertEquals(userCalls[0], buildGlossaryUserPrompt(texts, "日本語"));
   assertEquals(entries.length, 3);
 });
 
 Deno.test("extractGlossary splits chunks at char budget", async () => {
   const chunkSizes: number[] = [];
   const call = (_system: string, user: string, _signal: AbortSignal) => {
-    const texts = JSON.parse(user) as string[];
-    chunkSizes.push(texts.reduce((a, t) => a + t.length, 0));
+    chunkSizes.push(targetBlock(user).reduce((a, t) => a + t.length, 0));
     return Promise.resolve("[]");
   };
   const long = "x".repeat(8000);

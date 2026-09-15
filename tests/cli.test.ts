@@ -60,7 +60,6 @@ Deno.test("parseArgs: 不正な数値・形式・不明オプションは ArgPar
     ["paper.pdf", "--concurrency", "abc"],
     ["paper.pdf", "--concurrency", "0"],
     ["paper.pdf", "--concurrency", "2.5"],
-    ["paper.pdf", "--batch-size", "50"],
     ["paper.pdf", "--min-font-scale", "2"],
     ["paper.pdf", "--min-font-scale", "0"],
     ["paper.pdf", "--mask-color", "ffffff"],

@@ -20,7 +20,6 @@ export interface TranslateCliFlags {
   format?: "mono" | "dual";
   outDir?: string;
   concurrency?: number;
-  batchSizeChars?: number;
   maskColor?: string;
   minFontScale?: number;
   provider?: string;
@@ -40,7 +39,7 @@ export interface CliArgs {
 /** 引数解析エラー(不正な値・欠落した値)。終了コード2で終了する。 */
 export class ArgParseError extends Error {}
 
-/** 正の整数フラグ(--concurrency / --batch-size など)を検証して返す。 */
+/** 正の整数フラグ(--concurrency など)を検証して返す。 */
 function parsePositiveInt(
   name: string,
   val: string,
@@ -151,13 +150,6 @@ export function parseArgs(argv: string[]): CliArgs {
               flags.concurrency = parsePositiveInt("--concurrency", val);
               i++;
               break;
-            case "--batch-size":
-              if (val === undefined) {
-                throw new ArgParseError("--batch-size に値を指定してください");
-              }
-              flags.batchSizeChars = parsePositiveInt("--batch-size", val, 100);
-              i++;
-              break;
             case "--mask-color":
               if (val === undefined) {
                 throw new ArgParseError("--mask-color に値を指定してください");
@@ -216,7 +208,6 @@ export const HELP_TEXT = `MachuPITA — 論文PDFをレイアウトを保った�
   --format <mono|dual>  出力形式 (mono: 翻訳のみ / dual: 交互バイリンガル)
   --out-dir <dir>       成果物の出力先 (既定: カレントディレクトリ)
   --concurrency <n>     翻訳の同時実行数 (既定: 設定値)
-  --batch-size <n>      1リクエストあたりの文字数予算 (既定: 設定値)
   --mask-color <color>  原文のマスク色 (既定: 設定値)
   --min-font-scale <n>  フォント縮小の下限 (既定: 設定値)
   --provider <id>       使用プロバイダ (既定: 設定値)
@@ -243,7 +234,6 @@ export function buildOptions(
     targetLanguageFree: flags.langFree ?? settings.targetLanguageFree,
     outputFormat: flags.format ?? settings.outputFormat,
     concurrency: flags.concurrency ?? settings.concurrency,
-    batchSizeChars: flags.batchSizeChars ?? settings.batchSizeChars,
     maskColor: flags.maskColor ?? settings.maskColor,
     minFontScale: flags.minFontScale ?? settings.minFontScale,
   };

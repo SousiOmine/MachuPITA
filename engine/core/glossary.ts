@@ -12,17 +12,38 @@ export const GLOSSARY_CHUNK_CHARS = 12000;
 /** 用語抽出に使う原文の合計上限。超過時は文書全体から間引いて採す。 */
 export const GLOSSARY_TOTAL_CHARS = 48000;
 
-export function buildGlossarySystemPrompt(targetLanguage: string): string {
+/**
+ * システムプロンプトは用語集作成者の役割定義だけに留める。
+ * 抽出条件・出力形式は user ロール (buildGlossaryUserPrompt) 側で与える。
+ */
+export function buildGlossarySystemPrompt(): string {
+  return "You are a terminology specialist who builds translation glossaries for academic papers.";
+}
+
+/**
+ * 用語抽出を依頼する user プロンプトを組み立てる。
+ * 原文セグメント(JSON 配列)は <target> タグに格納する。
+ */
+export function buildGlossaryUserPrompt(
+  texts: string[],
+  targetLanguage: string,
+): string {
   return [
-    `You are building a translation glossary for an academic paper that will be translated into ${targetLanguage}.`,
-    "The user message contains a JSON array of text segments sampled from the paper.",
-    "Hard rules:",
+    `Read the text segments sampled from a PDF academic paper, stored as a JSON array inside the <target> tags below, and build a glossary for a translation into ${targetLanguage}.`,
+    "",
+    "Output rules (MANDATORY):",
     '1. Reply with ONLY a JSON array of objects shaped {"source": string, "target": string}. No markdown fences, no commentary.',
     "2. Extract domain-specific technical terms, method names, coined terms, and named entities that appear in the text and need a consistent rendering.",
     "3. Common words, general vocabulary, and citations must not appear in the list.",
     `4. "target" is the canonical rendering in ${targetLanguage}. If no established translation exists (coined term, product name, proper noun), set "target" to the exact original English string to keep it untranslated.`,
     "5. Do not invent translations. Prefer keeping the English string over guessing.",
     "6. Merge duplicate terms into one entry. Maximum 120 entries.",
+    "",
+    "The text segments to analyze are stored inside the <target> tags below.",
+    "",
+    "<target>",
+    JSON.stringify(texts),
+    "</target>",
   ].join("\n");
 }
 
@@ -52,25 +73,9 @@ export function mergeGlossary(parts: GlossaryEntry[][]): GlossaryEntry[] {
   return [...byKey.values()];
 }
 
+/** 用語集を `- source => target` の箇条書きにする(翻訳プロンプトへの埋め込み用)。 */
 export function formatGlossary(entries: GlossaryEntry[]): string {
   return entries.map((e) => `- ${e.source} => ${e.target}`).join("\n");
-}
-
-/** 用語集をシステムプロンプト末尾に追加する。空なら元のまま。 */
-export function appendGlossary(
-  basePrompt: string,
-  entries: GlossaryEntry[],
-): string {
-  if (entries.length === 0) return basePrompt;
-  return [
-    basePrompt,
-    "",
-    "Glossary (MANDATORY). These terms appear throughout the document:",
-    'GL1. If a term appears in the glossary below, you MUST render it exactly as its "target" everywhere it appears, in every item.',
-    "GL2. If a term's target equals its source (an English string), keep it in English; never translate it.",
-    "",
-    formatGlossary(entries),
-  ].join("\n");
 }
 
 export interface GlossaryCall {
@@ -81,7 +86,7 @@ export interface GlossaryCall {
 export async function extractGlossary(
   call: GlossaryCall,
   texts: string[],
-  system: string,
+  targetLanguage: string,
   signal: AbortSignal,
 ): Promise<GlossaryEntry[]> {
   const sampled = sampleTexts(texts, GLOSSARY_TOTAL_CHARS);
@@ -102,10 +107,14 @@ export async function extractGlossary(
   }
   if (current.length) chunks.push(current);
 
+  const systemPrompt = buildGlossarySystemPrompt();
   const parts: GlossaryEntry[][] = [];
   for (const chunk of chunks) {
-    const payload = JSON.stringify(chunk);
-    const raw = await call(system, payload, signal);
+    const raw = await call(
+      systemPrompt,
+      buildGlossaryUserPrompt(chunk, targetLanguage),
+      signal,
+    );
     parts.push(parseGlossaryResponse(raw));
   }
   return mergeGlossary(parts);

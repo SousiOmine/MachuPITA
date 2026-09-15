@@ -1,7 +1,6 @@
 import { join } from "@std/path";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import {
-  buildSystemPrompt,
   FauxEchoTranslator,
   PiTranslator,
 } from "../engine/core/translate.ts";
@@ -97,7 +96,6 @@ export function startTranslate(
             mode.kind === "faux" ? new FauxEchoTranslator() : new PiTranslator(
               ctx.piai.models(),
               mode.model,
-              buildSystemPrompt(targetLanguage),
               targetLanguage,
             ),
           ),

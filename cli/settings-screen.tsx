@@ -10,14 +10,12 @@ type FieldKey =
   | "lang-free"
   | "format"
   | "concurrency"
-  | "batch"
   | "mask"
   | "font-scale";
 
 const FIELD_LABEL: Record<Exclude<FieldKey, "lang" | "format">, string> = {
   "lang-free": "翻訳先の自由記述",
   concurrency: "同時実行数",
-  batch: "バッチ予算(文字)",
   mask: "マスク色",
   "font-scale": "フォント縮小下限",
 };
@@ -117,7 +115,7 @@ export function SettingsScreen({
 
   if (
     editing === "lang-free" || editing === "concurrency" ||
-    editing === "batch" || editing === "mask" || editing === "font-scale"
+    editing === "mask" || editing === "font-scale"
   ) {
     const commit = (value: string) => {
       if (editing === "lang-free") {
@@ -149,12 +147,6 @@ export function SettingsScreen({
           return;
         }
         setDraft({ ...draft, concurrency: Math.floor(n) });
-      } else if (editing === "batch") {
-        if (n < 100) {
-          setNotice("バッチ予算は 100 文字以上にしてください");
-          return;
-        }
-        setDraft({ ...draft, batchSizeChars: Math.floor(n) });
       } else {
         setDraft({ ...draft, minFontScale: n });
       }
@@ -168,8 +160,6 @@ export function SettingsScreen({
       ? "#ffffff"
       : editing === "concurrency"
       ? String(draft.concurrency)
-      : editing === "batch"
-      ? String(draft.batchSizeChars)
       : String(draft.minFontScale);
 
     return (
@@ -202,7 +192,6 @@ export function SettingsScreen({
       value: "format",
     },
     { label: `同時実行数: ${draft.concurrency}`, value: "concurrency" },
-    { label: `バッチ予算(文字): ${draft.batchSizeChars}`, value: "batch" },
     { label: `マスク色: ${draft.maskColor}`, value: "mask" },
     { label: `フォント縮小下限: ${draft.minFontScale}`, value: "font-scale" },
     { label: "保存して戻る", value: "save" },

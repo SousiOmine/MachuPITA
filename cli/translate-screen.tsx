@@ -199,7 +199,6 @@ export function TranslateSetupScreen({
               targetLanguageFree: lang === "free" ? freeText : undefined,
               outputFormat: format,
               concurrency: s.concurrency,
-              batchSizeChars: s.batchSizeChars,
               maskColor: s.maskColor,
               minFontScale: s.minFontScale,
             };

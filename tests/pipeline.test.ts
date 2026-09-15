@@ -3,11 +3,7 @@ import { extractPages } from "../engine/core/extract.ts";
 import { analyzePage } from "../engine/core/layout.ts";
 import { classifyBlocks } from "../engine/core/classify.ts";
 import { buildDualPdf, renderTranslatedPdf } from "../engine/core/render.ts";
-import type {
-  BatchItem,
-  BatchResult,
-  Translator,
-} from "../engine/core/translate.ts";
+import type { Translator } from "../engine/core/translate.ts";
 import { translateBlocks } from "../engine/core/translate.ts";
 import { createFixturePdf } from "./helpers.ts";
 
@@ -82,11 +78,8 @@ Deno.test(
     // mock translate with deliberately short output so that everything except
     // a small left-most area of each block must be covered by the white mask
     class MockTranslator implements Translator {
-      async translateBatch(items: BatchItem[]): Promise<BatchResult[]> {
-        return items.map((i) => ({
-          id: i.id,
-          translation: "訳",
-        }));
+      async translate(_text: string): Promise<string> {
+        return "訳";
       }
       usage() {
         return { input: 10, output: 10, total: 20, costTotal: 0 };
@@ -97,8 +90,6 @@ Deno.test(
       translatable,
       new MockTranslator(),
       {
-        targetLanguage: "日本語",
-        batchSizeChars: 3000,
         concurrency: 2,
       },
       new AbortController().signal,

@@ -42,7 +42,6 @@ export interface Settings {
   targetLanguageFree?: string;
   outputFormat: OutputFormat;
   concurrency: number;
-  batchSizeChars: number;
   maskColor: string;
   minFontScale: number;
 }
@@ -53,7 +52,6 @@ export const DEFAULT_SETTINGS: Settings = {
   targetLanguage: "ja",
   outputFormat: "mono",
   concurrency: 3,
-  batchSizeChars: 3000,
   maskColor: "#ffffff",
   minFontScale: 0.55,
 };
@@ -70,7 +68,10 @@ export class SettingsStore {
     if (this.#cache) return this.#cache;
     try {
       const raw = await Deno.readTextFile(this.#path);
-      this.#cache = { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } as Settings;
+      const stored = JSON.parse(raw) as Record<string, unknown>;
+      // 1段落1リクエスト化で廃止した batchSizeChars の残骸を読み捨てる。
+      delete stored.batchSizeChars;
+      this.#cache = { ...DEFAULT_SETTINGS, ...stored } as Settings;
     } catch {
       this.#cache = { ...DEFAULT_SETTINGS };
     }

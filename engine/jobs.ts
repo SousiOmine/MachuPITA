@@ -29,7 +29,6 @@ export interface JobOptionsPayload {
   targetLanguageFree?: string;
   outputFormat: OutputFormat;
   concurrency?: number;
-  batchSizeChars?: number;
   maskColor?: string;
   minFontScale?: number;
 }
@@ -289,11 +288,6 @@ export async function runPipeline(
     translatable,
     translator,
     {
-      targetLanguage: resolveTargetLanguageLabel(
-        job.options.targetLanguage,
-        job.options.targetLanguageFree,
-      ),
-      batchSizeChars: job.options.batchSizeChars ?? 3000,
       concurrency: job.options.concurrency ?? 3,
     },
     signal,
