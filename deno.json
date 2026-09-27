@@ -30,15 +30,15 @@
     "compile": "deno compile -A --output machupita main.ts"
   },
   "imports": {
-    "@std/path": "jsr:@std/path@^1",
-    "@std/assert": "jsr:@std/assert@^1",
+    "@std/path": "jsr:@std/path@^1.1.6",
+    "@std/assert": "jsr:@std/assert@^1.0.19",
     "@deno-ink/core": "jsr:@deno-ink/core@0.2.1",
     "react": "npm:react@18.3.1",
-    "@types/react": "npm:@types/react@^18.3.12",
+    "@types/react": "npm:@types/react@^18.3.31",
     "unpdf": "npm:unpdf@1.8.1",
-    "@napi-rs/canvas": "npm:@napi-rs/canvas@1.0.7",
-    "@cantoo/pdf-lib": "npm:@cantoo/pdf-lib@2.9.1",
+    "@napi-rs/canvas": "npm:@napi-rs/canvas@1.0.9",
+    "@cantoo/pdf-lib": "npm:@cantoo/pdf-lib@2.11.1",
     "fontkit": "npm:fontkit@2.0.4",
-    "@earendil-works/pi-ai": "npm:@earendil-works/pi-ai@0.84.2"
+    "@earendil-works/pi-ai": "npm:@earendil-works/pi-ai@0.87.1"
   }
 }
