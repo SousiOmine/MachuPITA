@@ -36,9 +36,9 @@
     "react": "npm:react@18.3.1",
     "@types/react": "npm:@types/react@^18.3.31",
     "unpdf": "npm:unpdf@1.8.1",
-    "@napi-rs/canvas": "npm:@napi-rs/canvas@1.0.9",
+    "@napi-rs/canvas": "npm:@napi-rs/canvas@1.0.10",
     "@cantoo/pdf-lib": "npm:@cantoo/pdf-lib@2.11.1",
     "fontkit": "npm:fontkit@2.0.4",
-    "@earendil-works/pi-ai": "npm:@earendil-works/pi-ai@0.87.1"
+    "@earendil-works/pi-ai": "npm:@earendil-works/pi-ai@1.0.2"
   }
 }
