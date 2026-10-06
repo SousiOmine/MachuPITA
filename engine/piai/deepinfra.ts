@@ -13,7 +13,8 @@ const COMPAT = {
 } satisfies OpenAICompletionsCompat;
 
 // モデルカタログは 2026-08-30 時点の api.deepinfra.com/models/{author}/{name}
-// から取得。更新時は各モデルの max_tokens / pricing を確認すること。
+// から取得(2026-10-06 に DeepSeek-V4.1-Flash を追加)。更新時は各モデルの
+// max_tokens / pricing を確認すること。
 interface DeepInfraModelSpec {
   id: string;
   name: string;
@@ -58,6 +59,14 @@ const MODEL_SPECS: DeepInfraModelSpec[] = [
     contextWindow: 1048576,
     inputCost: 0.08,
     outputCost: 0.18,
+  },
+  {
+    id: "deepseek-ai/DeepSeek-V4.1-Flash",
+    name: "DeepSeek V4.1 Flash",
+    reasoning: true,
+    contextWindow: 1048576,
+    inputCost: 0.2,
+    outputCost: 0.6,
   },
   {
     id: "deepseek-ai/DeepSeek-V4-Pro",
