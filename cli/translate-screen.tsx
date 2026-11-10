@@ -280,8 +280,24 @@ export function ProgressScreen({
         void copyArtifacts(ctx, handle, request.outDir, request.artifacts)
           .then((paths) => {
             setArtifacts(paths);
-            outcome.status = "done";
             outcome.artifacts = paths;
+            const final = handle.snapshot();
+            outcome.blocksTranslated = final?.blocksTranslated;
+            outcome.blocksFailed = final?.blocksFailed;
+            outcome.blocksTotal = final?.blocksTotal;
+            // 全段落が失敗した PDF は「原文のまま」なので、成功として返さない。
+            // (スクリプトから使うと失敗に気づけないため)
+            if (
+              final && final.blocksTotal > 0 &&
+              final.blocksTranslated === 0
+            ) {
+              outcome.status = "error";
+              outcome.error =
+                `全 ${final.blocksTotal} 段落の翻訳に失敗しました (原文のまま出力)。` +
+                "APIキーやプロバイダ設定を確認してください";
+            } else {
+              outcome.status = "done";
+            }
             setFinished(true);
           });
       } else if (event.type === "error") {

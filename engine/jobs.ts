@@ -3,6 +3,8 @@ import { extractPages } from "./core/extract.ts";
 import { analyzePage } from "./core/layout.ts";
 import { classifyBlocks } from "./core/classify.ts";
 import {
+  authErrorMessage,
+  isAuthError,
   isGlossaryCapable,
   translateBlocks,
   type Translator,
@@ -400,6 +402,8 @@ export async function withDocumentGlossary(
     return { translator: translator.withGlossary(glossary), glossary };
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") throw err;
+    // 認証エラーはこの後の翻訳もすべて失敗するので、警告で続行せず中断する。
+    if (isAuthError(err)) throw new Error(authErrorMessage(err));
     warn("用語集の抽出に失敗したためグロッサリなしで翻訳を続行します");
     return { translator, glossary: [] };
   }

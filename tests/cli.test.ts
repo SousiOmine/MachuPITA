@@ -110,6 +110,18 @@ Deno.test("buildSummary: 成果物パスとエラー・中止を整形する", (
     "エラー: boom",
   );
   assertEquals(buildSummary({ status: "cancelled" }), "中止されました。");
+
+  // 一部の段落が失敗したときは、成功サマリでも注意書きを出す
+  const partial = buildSummary({
+    status: "done",
+    artifacts: { mono: "/tmp/out/a_translated.pdf" },
+    blocksTranslated: 2,
+    blocksFailed: 3,
+    blocksTotal: 5,
+  });
+  assert(partial.includes("完了しました"));
+  assert(partial.includes("3 段落は翻訳に失敗し、原文のまま出力しました"));
+  assert(partial.includes("全 5 段落"));
 });
 
 /** faux モードで main.ts をサブプロセス実行し、成果物ディレクトリを返す。 */

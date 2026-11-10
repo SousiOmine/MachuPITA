@@ -1,10 +1,17 @@
-import { assert, assertEquals, assertFalse, assertThrows } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertFalse,
+  assertRejects,
+  assertThrows,
+} from "@std/assert";
 import type { Api, Model, Models } from "@earendil-works/pi-ai";
 import { buildGlossarySystemPrompt } from "../engine/core/glossary.ts";
 import {
   buildSystemPrompt,
   buildTranslationUserPrompt,
   type GlossaryCapable,
+  isAuthError,
   isGlossaryCapable,
   isJapaneseTarget,
   parseTranslationResponse,
@@ -266,6 +273,47 @@ Deno.test("translateBlocks falls back to original on persistent failure", async 
   assertEquals(blocks[0].translation, undefined);
   assertEquals(blocks[0].warnings?.length, 1);
   assertEquals(blocks[0].warnings?.[0].includes("LLM exploded"), true);
+});
+
+Deno.test("isAuthError: 401/403 と invalid_api_key を認証エラーとみなす", () => {
+  assert(isAuthError(new Error('401: {"code":"invalid_api_key"}')));
+  assert(isAuthError(new Error("403: forbidden")));
+  assert(isAuthError(Object.assign(new Error("boom"), { status: 401 })));
+  assertFalse(isAuthError(new Error("500: internal server error")));
+  assertFalse(isAuthError(new Error("LLM exploded")));
+  assertFalse(isAuthError("timeout after 30s"));
+});
+
+Deno.test("translateBlocks: 認証エラーはリトライせず即座に中断する", async () => {
+  const blocks = [
+    makeBlock("b1", "first paragraph"),
+    makeBlock("b2", "second paragraph"),
+  ];
+  let calls = 0;
+  const translator: Translator = {
+    translate(): Promise<string> {
+      calls++;
+      return Promise.reject(
+        new Error('401: {"message":"unauthorized","code":"invalid_api_key"}'),
+      );
+    },
+    usage: () => ({ input: 0, output: 0, total: 0, costTotal: 0 }),
+  };
+  await assertRejects(
+    () =>
+      translateBlocks(
+        blocks,
+        translator,
+        { concurrency: 1 },
+        new AbortController().signal,
+        {},
+        4,
+        0,
+      ),
+    Error,
+    "APIキーが拒否されました",
+  );
+  assertEquals(calls, 1);
 });
 
 Deno.test("isJapaneseTarget: 日本語ラベル/コードを判定する", () => {

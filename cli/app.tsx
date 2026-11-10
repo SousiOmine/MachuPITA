@@ -25,6 +25,12 @@ export interface CliOutcome {
   status: "running" | "done" | "error" | "cancelled";
   artifacts?: TranslateResult;
   error?: string;
+  /** 翻訳に成功した段落数 (サマリ表示用) */
+  blocksTranslated?: number;
+  /** 翻訳に失敗して原文を保持した段落数 (サマリ表示用) */
+  blocksFailed?: number;
+  /** 翻訳対象だった段落数 (サマリ表示用) */
+  blocksTotal?: number;
 }
 
 export interface AppProps {

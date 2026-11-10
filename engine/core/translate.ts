@@ -290,6 +290,26 @@ export const TRANSLATE_MAX_ATTEMPTS = 4;
 /** リトライ前に待機するミリ秒。 */
 export const TRANSLATE_RETRY_DELAY_MS = 3000;
 
+/**
+ * 認証・権限エラー (HTTP 401/403) かどうか。
+ * キーが拒否されている間は全段落が同じ理由で失敗するため、
+ * リトライせずジョブ全体を止める判断に使う。
+ */
+export function isAuthError(err: unknown): boolean {
+  const status = (err as { status?: unknown } | null)?.status;
+  if (status === 401 || status === 403) return true;
+  const message = err instanceof Error ? err.message : String(err ?? "");
+  return /invalid[ _]api[ _]key|incorrect api key|unauthorized|authentication fail/i
+    .test(message) ||
+    /^\s*(401|403)\b/.test(message);
+}
+
+/** 認証エラーを利用者向けのメッセージに整える。元の詳細は括弧内に残す。 */
+export function authErrorMessage(err: unknown): string {
+  const detail = err instanceof Error ? err.message : String(err);
+  return `APIキーが拒否されました。設定を確認してください (${detail})`;
+}
+
 /** 中止を検知できる待機。待機中に中止されたら AbortError を投げる。 */
 function sleepWithAbort(ms: number, signal: AbortSignal): Promise<void> {
   if (ms <= 0) return Promise.resolve();
@@ -381,6 +401,9 @@ async function translateBlock(
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") throw err;
       if (signal.aborted) throw new DOMException("aborted", "AbortError");
+      // 認証エラーはリトライしても回復しない。全段落が同じ理由で失敗する前に
+      // ジョブを止め、原因をそのまま利用者に見せる。
+      if (isAuthError(err)) throw new Error(authErrorMessage(err));
       lastError = err;
     }
     if (attempt < maxAttempts) {

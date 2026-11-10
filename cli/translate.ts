@@ -146,6 +146,9 @@ export function buildSummary(outcome: {
   status: "running" | "done" | "error" | "cancelled";
   error?: string;
   artifacts?: TranslateResult;
+  blocksTranslated?: number;
+  blocksFailed?: number;
+  blocksTotal?: number;
 }): string {
   if (outcome.status === "error") {
     return `エラー: ${outcome.error ?? "不明なエラー"}`;
@@ -159,5 +162,12 @@ export function buildSummary(outcome: {
   if (a?.dual) lines.push(`  バイリンガルPDF: ${a.dual}`);
   if (a?.sidecar) lines.push(`  sidecar JSON: ${a.sidecar}`);
   if (a?.original) lines.push(`  元PDF: ${a.original}`);
+  if (outcome.blocksFailed && outcome.blocksFailed > 0) {
+    lines.push("");
+    lines.push(
+      `注意: ${outcome.blocksFailed} 段落は翻訳に失敗し、原文のまま出力しました` +
+        (outcome.blocksTotal ? ` (全 ${outcome.blocksTotal} 段落)` : ""),
+    );
+  }
   return lines.join("\n");
 }
