@@ -210,3 +210,28 @@ Deno.test("analyzePage keeps grid cells as separate blocks", () => {
   const body = texts.find((t) => t.startsWith("Body text line one"));
   assertEquals(body?.includes("line two"), true);
 });
+
+Deno.test("buildLines は LaTeX 系の太字書体名を太字として扱う", () => {
+  const mk = (fontName: string, y: number) => ({
+    ...item("Heading", 72, y, 12),
+    fontName,
+  });
+  const lines = buildLines([
+    mk("ABCDEF+NimbusRomNo9L-Medi", 700),
+    mk("QWERTY+CMBX10", 680),
+    mk("ABCDEF+NimbusRomNo9L-Regu", 660),
+  ]);
+  assertEquals(lines.map((l) => l.bold), [true, true, false]);
+});
+
+Deno.test("buildLines は PDF 由来の太字フラグをフォント名より優先する", () => {
+  const lines = buildLines([
+    { ...item("Flagged bold", 72, 700, 12), fontName: "Helvetica", bold: true },
+    {
+      ...item("Flagged regular", 72, 680, 12),
+      fontName: "Helvetica-Bold",
+      bold: false,
+    },
+  ]);
+  assertEquals(lines.map((l) => l.bold), [true, false]);
+});

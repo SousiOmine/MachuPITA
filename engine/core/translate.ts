@@ -107,6 +107,8 @@ export function buildTranslationUserPrompt(
     "6. Render the same source term identically throughout the document; never give one term different translations in different passages.",
     "7. Coined terms, method names, product names, and proper nouns without an established translation must stay in English; never invent a translation for them.",
     "8. On the first occurrence of such a kept English term, you may append the English in parentheses after the translation, like 訳語 (Original Term); afterwards use the translation alone.",
+    "9. Bibliographic entries (a reference list): translate the title of the work, but keep author names, journal/conference names, publisher names, page numbers, and years exactly as written in the source.",
+    "10. Translate every sentence. Never return the source text unchanged just because it names people, organizations, or publications.",
     "",
     ...(isJapaneseTarget(targetLanguage) ? [...JAPANESE_STYLE_RULES, ""] : []),
     ...buildGlossarySection(glossary),

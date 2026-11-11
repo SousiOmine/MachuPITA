@@ -4,8 +4,12 @@ import { filterVisibleItems, findInvisibleTextOrigins } from "./visibility.ts";
 
 /** pdf.js のフォントローダーID("g_d0_f1" など)から得た実際のフォント情報。 */
 interface FontTrait {
-  /** 実フォント名。pdf.js v5 以降は公開されないため undefined になることが多い。 */
+  /**
+   * 実フォント名(例: "ABCDEF+NimbusRomNo9L-Medi")。pdf.js が公開するのは
+   * fontExtraProperties を有効にしたときだけなので、無ければ undefined。
+   */
   name?: string;
+  /** pdf.js が判定した太字フラグ。埋め込みフォントでは undefined のことが多い。 */
   bold?: boolean;
 }
 
@@ -19,9 +23,10 @@ interface FontSource {
 
 /**
  * pdf.js のテキスト項目の fontName は "g_d0_f1" のような内部ローダーIDで、
- * 実際のフォント名と太字フラグは commonObjs に読み込まれたフォントにある。
+ * 実際のフォント名は commonObjs に読み込まれたフォントにある。実フォント名が
+ * 分かれば "NimbusRomNo9L-Medi" "CMBX10" のような太字書体も判定できる。
  * フォントはオペレータリストの実行時に読み込まれるため、未読み込みなら
- * getOperatorList() を呼んでから引き直す(visility 検査で読み込み済みなら再実行しない)。
+ * getOperatorList() を呼んでから引き直す(可視性検査で読み込み済みなら再実行しない)。
  */
 async function resolveFontTraits(
   page: FontSource,
@@ -61,7 +66,8 @@ export async function extractPages(
   // PDF.js transfers the buffer to its worker, detaching it; operate on a copy
   // so callers keep their original bytes usable for rendering later.
   const bytes = input.slice();
-  const pdf = await getDocumentProxy(bytes);
+  // fontExtraProperties を有効にすると、フォント名(name)まで取得できる。
+  const pdf = await getDocumentProxy(bytes, { fontExtraProperties: true });
   const pages: ExtractedPage[] = [];
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);

@@ -78,9 +78,12 @@ function isBoldItem(item: TextItemBox): boolean {
   return item.bold ?? isBoldFont(item.fontName);
 }
 
-/** フォント名からの太字判定(フラグが取れなかった場合のフォールバック)。 */
+/**
+ * フォント名からの太字判定(pdf.js の太字フラグが取れなかった場合のフォールバック)。
+ * LaTeX 系の "NimbusRomNo9L-Medi" や "CMBX10"、欧文の "-Semibold" なども拾う。
+ */
 function isBoldFont(fontName: string): boolean {
-  return /bold|black|heavy/i.test(fontName);
+  return /bold|black|heavy|demi|medi|cmbx|cmb\d/i.test(fontName);
 }
 
 /** 文字数で重み付けした中央値。ドロップキャップや上付き文字を代表値にしない。 */
@@ -115,14 +118,16 @@ function buildLineBox(items: TextItemBox[], cells?: LineBox[]): LineBox {
   let y0 = Infinity;
   let y1 = -Infinity;
   let boldWeight = 0;
+  let runningEnd = items.length > 0 ? items[0].x + items[0].width : 0;
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     if (i > 0) {
       const prev = items[i - 1];
-      if (it.x - (prev.x + prev.width) > Math.max(1, prev.fontSize * 0.22)) {
+      if (it.x - runningEnd > Math.max(1, prev.fontSize * 0.22)) {
         text += " ";
       }
     }
+    runningEnd = Math.max(runningEnd, it.x + it.width);
     text += it.str;
     x0 = Math.min(x0, it.x);
     x1 = Math.max(x1, it.x + it.width);
@@ -153,11 +158,14 @@ function assembleLine(items: TextItemBox[]): LineBox {
     if (cellItems.length === 0) return;
     cells.push(buildLineBox(cellItems));
   };
+  // 行内の数式片(√ など)は前行のテキストと x 範囲が重なることがある。
+  // 直前の項目だけでなく「ここまでで最も右の端」との差で隙間を測る。
+  let runningEnd = items.length > 0 ? items[0].x + items[0].width : 0;
   for (let i = 0; i < items.length; i++) {
     if (i === 0) continue;
     const prev = items[i - 1];
     const it = items[i];
-    const gap = it.x - (prev.x + prev.width);
+    const gap = it.x - runningEnd;
     if (
       gap >= Math.max(prev.fontSize * CELL_GAP_RATIO, CELL_GAP_MIN_PT) &&
       prev.str.trim() !== "" && it.str.trim() !== ""
@@ -165,6 +173,7 @@ function assembleLine(items: TextItemBox[]): LineBox {
       closeCell(i);
       cellStart = i;
     }
+    runningEnd = Math.max(runningEnd, it.x + it.width);
   }
   closeCell(items.length);
   const line = buildLineBox(items);
@@ -240,6 +249,20 @@ export function detectColumns(
   ];
 }
 
+/** 同一段内の行間(ベースライン間隔)の代表値を推定する。 */
+function typicalLineGap(ordered: LineBox[]): number | undefined {
+  const gaps: number[] = [];
+  for (let i = 1; i < ordered.length; i++) {
+    const delta = ordered[i - 1].baselineY - ordered[i].baselineY;
+    const fs = Math.max(ordered[i - 1].fontSize, ordered[i].fontSize);
+    // 段落間・見出し前後などの大きい間隔は行間の推定から除く
+    if (delta > 0 && delta <= fs * 1.85) gaps.push(delta);
+  }
+  if (gaps.length === 0) return undefined;
+  gaps.sort((a, b) => a - b);
+  return gaps[Math.floor(gaps.length / 2)];
+}
+
 export function groupParagraphs(
   lines: LineBox[],
   _columnIndex: number,
@@ -247,6 +270,9 @@ export function groupParagraphs(
   const ordered = [...lines].sort((a, b) =>
     b.baselineY - a.baselineY || a.x0 - b.x0
   );
+  // 段落間の空きは行間より少し広いだけのことが多い(1.3〜1.5倍)。
+  // 固定倍率ではなく、その段の実際の行間から閾値を決める。
+  const typicalGap = typicalLineGap(ordered);
   const groups: LineBox[][] = [];
   let current: LineBox[] = [];
   for (const line of ordered) {
@@ -279,9 +305,13 @@ export function groupParagraphs(
       prev.x0 - line.x0 > fs * 0.65;
     const centeredHeadingBeforeBody = prevWidth < lineWidth * 0.6 &&
       line.x0 < prev.x0 - fs * 3;
+    const maxMergeGap = Math.min(
+      fs * 1.85,
+      Math.max(fs * 1.15, (typicalGap ?? fs * 1.2) * 1.3),
+    );
     if (
       baselineDelta > 0 &&
-      baselineDelta <= fs * 1.85 &&
+      baselineDelta <= maxMergeGap &&
       overlap > narrower * 0.25 &&
       sizeOk &&
       !prevIsDebris &&

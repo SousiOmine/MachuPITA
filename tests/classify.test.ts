@@ -114,3 +114,14 @@ Deno.test("filterVisibleItems drops items matching invisible origins", async () 
   // origins が空なら何も落ちない
   assertEquals(filterVisibleItems(items, []).length, 2);
 });
+
+Deno.test("looksLikeFormula は数式記号を含む見出しを本文として扱う", () => {
+  assertEquals(
+    looksLikeFormula("D3 branes or N = 4 U(N) super-Yang-Mills in d=3+1"),
+    false,
+  );
+  assertEquals(
+    looksLikeFormula("Training loss = cross-entropy over the dataset"),
+    false,
+  );
+});

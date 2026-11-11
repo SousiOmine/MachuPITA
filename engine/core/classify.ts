@@ -132,6 +132,9 @@ export function looksLikeFormula(text: string): boolean {
   ) return true;
   if (!MATH_OPERATOR_RE.test(t)) return false;
   if (t.length > 300) return false;
+  // "D3 branes or N = 4 U(N) super-Yang-Mills in d=3+1" のような、数式記号を
+  // 含むが見出し・本文である文を数式と誤判定しない。英単語が3つ以上あれば文とみなす。
+  if ((t.match(/[A-Za-z]{3,}/g) ?? []).length >= 3) return false;
   // 文末の終止符、文中の文境界(「. + 大文字」)、CJKの句読点があれば本文とみなす
   if (/[.!?。！？]["'」』）)]*\s*$/.test(t)) return false;
   if (/[。！？]/.test(t)) return false;
