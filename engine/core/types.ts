@@ -5,6 +5,11 @@ export interface TextItemBox {
   width: number;
   fontSize: number;
   fontName: string;
+  /**
+   * フォント自体が持つ太字フラグ(PDF のフォントディスクリプタ由来)。
+   * 判定できなかった場合は undefined で、フォント名からの推定に委ねる。
+   */
+  bold?: boolean;
   rotation: number;
 }
 

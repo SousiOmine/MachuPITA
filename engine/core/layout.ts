@@ -69,11 +69,16 @@ function emptyLine(item: TextItemBox): LineBox {
     baselineY: item.y,
     text: "",
     fontSize: item.fontSize,
-    bold: isBoldFont(item.fontName),
+    bold: isBoldItem(item),
   };
 }
 
-/** フォント名からの太字判定。 */
+/** テキスト項目が太字かどうか。PDF 由来のフラグを優先し、無ければフォント名で推定する。 */
+function isBoldItem(item: TextItemBox): boolean {
+  return item.bold ?? isBoldFont(item.fontName);
+}
+
+/** フォント名からの太字判定(フラグが取れなかった場合のフォールバック)。 */
 function isBoldFont(fontName: string): boolean {
   return /bold|black|heavy/i.test(fontName);
 }
@@ -123,7 +128,7 @@ function buildLineBox(items: TextItemBox[], cells?: LineBox[]): LineBox {
     x1 = Math.max(x1, it.x + it.width);
     y0 = Math.min(y0, it.y - it.fontSize * DESCENT);
     y1 = Math.max(y1, it.y + it.fontSize * ASCENT);
-    if (isBoldFont(it.fontName)) boldWeight++;
+    if (isBoldItem(it)) boldWeight++;
   }
   return {
     x0,

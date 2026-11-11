@@ -2,6 +2,57 @@ import { getDocumentProxy } from "unpdf";
 import type { ExtractedPage, TextItemBox } from "./types.ts";
 import { filterVisibleItems, findInvisibleTextOrigins } from "./visibility.ts";
 
+/** pdf.js のフォントローダーID("g_d0_f1" など)から得た実際のフォント情報。 */
+interface FontTrait {
+  name?: string;
+  bold?: boolean;
+}
+
+interface FontSource {
+  getOperatorList(): Promise<unknown>;
+  commonObjs: {
+    has(id: string): boolean;
+    get(id: string): unknown;
+  };
+}
+
+/**
+ * pdf.js のテキスト項目の fontName は "g_d0_f1" のような内部ローダーIDで、
+ * 実際のフォント名と太字フラグは commonObjs に読み込まれたフォントにある。
+ * フォントはオペレータリストの実行時に読み込まれるため、未読み込みなら
+ * getOperatorList() を呼んでから引き直す(visility 検査で読み込み済みなら再実行しない)。
+ */
+async function resolveFontTraits(
+  page: FontSource,
+  ids: string[],
+): Promise<Map<string, FontTrait>> {
+  const traits = new Map<string, FontTrait>();
+  const collect = () => {
+    for (const id of ids) {
+      if (traits.has(id) || !page.commonObjs.has(id)) continue;
+      const font = page.commonObjs.get(id) as {
+        name?: unknown;
+        bold?: unknown;
+      } | null;
+      if (!font) continue;
+      traits.set(id, {
+        name: typeof font.name === "string" ? font.name : undefined,
+        bold: typeof font.bold === "boolean" ? font.bold : undefined,
+      });
+    }
+  };
+  collect();
+  if (traits.size < ids.length) {
+    try {
+      await page.getOperatorList();
+    } catch {
+      // 読み込みに失敗しても fontName だけは元の値のまま使う
+    }
+    collect();
+  }
+  return traits;
+}
+
 export async function extractPages(
   input: Uint8Array,
   onProgress?: (page: number, total: number) => void,
@@ -22,6 +73,12 @@ export async function extractPages(
     } catch {
       // 検出に失敗した場合は除外せず続行
     }
+    const fontIds = new Set<string>();
+    for (const item of content.items) {
+      if (!("str" in item) || item.str.trim() === "") continue;
+      if (item.fontName) fontIds.add(String(item.fontName));
+    }
+    const fontTraits = await resolveFontTraits(page, [...fontIds]);
     const items: TextItemBox[] = [];
     for (const item of content.items) {
       if (!("str" in item)) continue;
@@ -29,13 +86,16 @@ export async function extractPages(
       const m = item.transform as unknown as number[];
       const fontSize = Math.hypot(m[2], m[3]) || Math.abs(m[3]);
       const skew = Math.atan2(m[1], m[0]);
+      const fontId = String(item.fontName ?? "");
+      const trait = fontTraits.get(fontId);
       items.push({
         str: item.str,
         x: m[4],
         y: m[5],
         width: item.width ?? item.str.length * fontSize * 0.5,
         fontSize,
-        fontName: String(item.fontName ?? ""),
+        fontName: trait?.name ?? fontId,
+        bold: trait?.bold,
         rotation: Math.abs(skew),
       });
     }
