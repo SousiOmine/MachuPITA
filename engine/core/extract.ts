@@ -4,6 +4,7 @@ import { filterVisibleItems, findInvisibleTextOrigins } from "./visibility.ts";
 
 /** pdf.js のフォントローダーID("g_d0_f1" など)から得た実際のフォント情報。 */
 interface FontTrait {
+  /** 実フォント名。pdf.js v5 以降は公開されないため undefined になることが多い。 */
   name?: string;
   bold?: boolean;
 }
