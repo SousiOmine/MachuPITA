@@ -20,6 +20,13 @@ export function isTranslatable(text: string): boolean {
   ) {
     return false;
   }
+  // 連絡先メールだけの行(例: "{a,b}@example.edu")は翻訳しない
+  if (
+    /@[\w.-]+\.[\w.]+/.test(trimmed) &&
+    trimmed.replace(/\S+@\S+/g, "").trim().length < 15
+  ) {
+    return false;
+  }
   return true;
 }
 
@@ -133,8 +140,15 @@ export function looksLikeFormula(text: string): boolean {
   if (!MATH_OPERATOR_RE.test(t)) return false;
   if (t.length > 300) return false;
   // "D3 branes or N = 4 U(N) super-Yang-Mills in d=3+1" のような、数式記号を
-  // 含むが見出し・本文である文を数式と誤判定しない。英単語が3つ以上あれば文とみなす。
-  if ((t.match(/[A-Za-z]{3,}/g) ?? []).length >= 3) return false;
+  // 含むが見出し・本文である文を数式と誤判定しない。小文字の自然語が3つ以上
+  // あれば文とみなす(識別子 YBF16 / doubleDequant だけの式は数式のまま)。
+  // 識別子(YBF16, Wk-bit など)の一部を自然語として数えない
+  const naturalWords =
+    (t.match(/(?<![A-Za-z0-9_-])[a-z]{3,}(?![A-Za-z0-9_-])/g) ?? []).length +
+    (t.match(
+      /(?<![A-Za-z0-9_-])(?:or|in|of|to|is|on|at|by|as|an|be|we|it)(?![A-Za-z0-9_-])/g,
+    ) ?? []).length;
+  if (naturalWords >= 3) return false;
   // 文末の終止符、文中の文境界(「. + 大文字」)、CJKの句読点があれば本文とみなす
   if (/[.!?。！？]["'」』）)]*\s*$/.test(t)) return false;
   if (/[。！？]/.test(t)) return false;

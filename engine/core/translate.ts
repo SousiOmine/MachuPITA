@@ -18,11 +18,19 @@ import {
 export interface TranslateJobOptions {
   /** 同時に投げるリクエスト数 */
   concurrency: number;
+  /** 翻訳先の言語(原文のまま返された応答の検出に使う) */
+  targetLanguage?: string;
+  /** 段落ごとの文脈(論文タイトル・節見出し)。訳語の一貫性に使う。 */
+  contextFor?: (block: Block) => string | undefined;
 }
 
 export interface Translator {
   /** 1 段落を翻訳して訳文を返す。失敗時は例外を投げる。 */
-  translate(text: string, signal: AbortSignal): Promise<string>;
+  translate(
+    text: string,
+    signal: AbortSignal,
+    context?: string,
+  ): Promise<string>;
   usage(): TokenUsageTotals;
 }
 
@@ -93,6 +101,7 @@ export function buildTranslationUserPrompt(
   text: string,
   targetLanguage: string,
   glossary: GlossaryEntry[] = [],
+  context?: string,
 ): string {
   return [
     `Translate the text extracted from a PDF academic paper into ${targetLanguage}.`,
@@ -111,6 +120,13 @@ export function buildTranslationUserPrompt(
     "10. Translate every sentence. Never return the source text unchanged just because it names people, organizations, or publications.",
     "",
     ...(isJapaneseTarget(targetLanguage) ? [...JAPANESE_STYLE_RULES, ""] : []),
+    ...(context
+      ? [
+        "Document context (use only to disambiguate; do not translate or repeat it):",
+        context,
+        "",
+      ]
+      : []),
     ...buildGlossarySection(glossary),
     "The text to translate is stored inside the <target> tags below.",
     "",
@@ -189,7 +205,11 @@ export class PiTranslator implements Translator, GlossaryCapable {
       .join("");
   }
 
-  async translate(text: string, signal: AbortSignal): Promise<string> {
+  async translate(
+    text: string,
+    signal: AbortSignal,
+    context?: string,
+  ): Promise<string> {
     const message = await this.#models.completeSimple(
       this.#model,
       {
@@ -201,6 +221,7 @@ export class PiTranslator implements Translator, GlossaryCapable {
               text,
               this.#targetLanguage,
               this.#glossary,
+              context,
             ),
             timestamp: Date.now(),
           },
@@ -268,7 +289,11 @@ export class PiTranslator implements Translator, GlossaryCapable {
 export class FauxEchoTranslator implements Translator {
   #totals: TokenUsageTotals = { input: 0, output: 0, total: 0, costTotal: 0 };
 
-  async translate(text: string, _signal: AbortSignal): Promise<string> {
+  async translate(
+    text: string,
+    _signal: AbortSignal,
+    _context?: string,
+  ): Promise<string> {
     await new Promise((r) => setTimeout(r, 30));
     this.#totals.input += Math.ceil(text.length / 4);
     this.#totals.output += Math.ceil(text.length / 5);
@@ -331,6 +356,32 @@ function sleepWithAbort(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+/** 日本語らしい文字(かな・漢字)の数。 */
+function countJapanese(text: string): number {
+  return text.match(/[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]/g)?.length ??
+    0;
+}
+
+/**
+ * 訳文が原文のまま返されている疑いがあるか(日本語ターゲットのみ)。
+ * 英単語が十分にある段落なのに日本語がほとんど無い応答は、翻訳漏れとして
+ * リトライさせる。見出し・固有名詞だけの短い段落は対象外。
+ */
+export function looksUntranslated(
+  source: string,
+  translation: string,
+  targetLanguage?: string,
+): boolean {
+  if (!targetLanguage || !isJapaneseTarget(targetLanguage)) return false;
+  // メールアドレス・数式・コード片は「原文のまま」が正しいので対象外
+  if (/@/.test(source) || /[=<>≤≥≈≠√]/.test(source)) return false;
+  const sourceJapanese = countJapanese(source);
+  if (sourceJapanese / Math.max(1, source.length) > 0.2) return false;
+  const words = source.match(/[A-Za-z]{3,}/g)?.length ?? 0;
+  if (words < 4) return false;
+  return countJapanese(translation) < 4;
+}
+
 /**
  * 翻訳対象ブロックを 1 段落 1 リクエストで翻訳する。
  * プレースホルダ欠落・空応答・例外はリトライし、最終的に失敗した段落は
@@ -364,6 +415,7 @@ export async function translateBlocks(
         progress,
         maxAttempts,
         retryDelayMs,
+        options,
       );
       progress.onUsage?.(translator.usage());
     }
@@ -382,8 +434,10 @@ async function translateBlock(
   progress: TranslateProgress,
   maxAttempts: number,
   retryDelayMs: number,
+  options: TranslateJobOptions,
 ): Promise<void> {
   const tokens = block.protectedTokens ?? [];
+  const context = options.contextFor?.(block);
   // プレースホルダが欠落した訳文は、全試行後も回復しなければ文末補完して採用する。
   let partial: { text: string; missing: string[] } | undefined;
   let lastError: unknown = null;
@@ -391,15 +445,28 @@ async function translateBlock(
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     if (signal.aborted) throw new DOMException("aborted", "AbortError");
     try {
-      const raw = await translator.translate(block.text, signal);
+      const raw = await translator.translate(block.text, signal, context);
       const restored = restorePlaceholders(raw, tokens);
       if (restored.missingTokens.length === 0) {
-        block.translation = restored.text;
-        block.status = "translated";
-        progress.onBlockDone?.(block.id, true);
-        return;
+        // 見出し・固有名詞は英語のまま残すことがあるため、本文だけを対象にする
+        const echoed = block.kind === "body" &&
+          looksUntranslated(block.text, restored.text, options.targetLanguage);
+        if (echoed && attempt < maxAttempts) {
+          lastError = new Error("untranslated response (source echoed)");
+        } else {
+          block.translation = restored.text;
+          block.status = "translated";
+          if (echoed) {
+            block.warnings = [
+              "原文のまま返されたため、そのまま出力しました(翻訳漏れの可能性)",
+            ];
+          }
+          progress.onBlockDone?.(block.id, true);
+          return;
+        }
+      } else {
+        partial = { text: restored.text, missing: restored.missingTokens };
       }
-      partial = { text: restored.text, missing: restored.missingTokens };
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") throw err;
       if (signal.aborted) throw new DOMException("aborted", "AbortError");

@@ -285,6 +285,7 @@ export function ProgressScreen({
             outcome.blocksTranslated = final?.blocksTranslated;
             outcome.blocksFailed = final?.blocksFailed;
             outcome.blocksTotal = final?.blocksTotal;
+            outcome.warnings = final ? [...final.warnings] : undefined;
             // 全段落が失敗した PDF は「原文のまま」なので、成功として返さない。
             // (スクリプトから使うと失敗に気づけないため)
             if (

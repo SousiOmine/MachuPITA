@@ -1,3 +1,5 @@
+import type { Rgb } from "./visibility.ts";
+
 export interface TextItemBox {
   str: string;
   x: number;
@@ -11,6 +13,10 @@ export interface TextItemBox {
    */
   bold?: boolean;
   rotation: number;
+  /** 元テキストの文字色(0..1)。取得できなかった場合は undefined。 */
+  color?: Rgb;
+  /** 元テキストの背後の塗り色。取得できなかった場合は undefined。 */
+  backgroundColor?: Rgb;
 }
 
 export interface LineBox {
@@ -22,6 +28,10 @@ export interface LineBox {
   text: string;
   fontSize: number;
   bold: boolean;
+  /** 元テキストの文字色(行内で最頻の色) */
+  color?: Rgb;
+  /** 元テキストの背後の塗り色 */
+  backgroundColor?: Rgb;
   /** 行内大ギャップで分割したセル(著者グリッド・表・数式など)。セルは単独ブロック扱い */
   cells?: LineBox[];
 }
@@ -46,6 +56,10 @@ export interface Block {
   bold: boolean;
   centered: boolean;
   kind: BlockKind;
+  /** 元テキストの文字色(再描画時に継承する) */
+  color?: Rgb;
+  /** 元テキストの背後の塗り色(マスク色に使う) */
+  backgroundColor?: Rgb;
   warnings?: string[];
   protectedTokens?: string[];
 }

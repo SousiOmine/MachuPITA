@@ -3,6 +3,8 @@ import * as fontkitModule from "fontkit";
 import { join } from "@std/path";
 import { PROJECT_ROOT } from "../settings.ts";
 import type { Block, PageLayout } from "./types.ts";
+import { colorsClose } from "./visibility.ts";
+import type { Rgb } from "./visibility.ts";
 
 const LATIN_FONTS = {
   regular: "NotoSans-Regular.ttf",
@@ -142,6 +144,18 @@ export function wrapText(
   return lines;
 }
 
+/** 原文が箇条書きなら、訳文にも同じ記号を残す(LLMが落とすことがある)。 */
+const BULLET_PREFIX_RE =
+  /^([\u2022\u25cf\u25cb\u25e6\u25aa\u25ab\u25b8\u25b9\u25ba\u25b6\u25c6\u25c7\u25a0\u25a1\u2605\u2606\u203b\u30fb])/;
+
+function preserveBullet(original: string, translated: string): string {
+  const match = original.trimStart().match(BULLET_PREFIX_RE);
+  if (!match) return translated;
+  const marker = match[1];
+  if (translated.trimStart().startsWith(marker)) return translated;
+  return `${marker} ${translated.trimStart()}`;
+}
+
 /** 行頭に来せたくない文字(禁則処理) */
 const KINSOKU_NO_START = /[\]、。,.:;!?！？・ー…‥°%‰)）〉》】」』〕”’]/;
 
@@ -164,9 +178,18 @@ export async function renderTranslatedPdf(
   for (const layout of pages) {
     if (layout.pageNumber > doc.getPageCount()) continue;
     const page = doc.getPage(layout.pageNumber - 1);
+    const bottomLimits = computeBottomLimits(layout.blocks);
     for (const block of layout.blocks) {
       if (block.status !== "translated" || !block.translation) continue;
-      drawBlock(page, block, block.translation, fonts, mask, options);
+      drawBlock(
+        page,
+        block,
+        preserveBullet(block.originalText, block.translation),
+        fonts,
+        mask,
+        options,
+        bottomLimits.get(block.id),
+      );
     }
   }
   return new Uint8Array(await doc.save());
@@ -236,6 +259,44 @@ const LINE_HEIGHT_FACTOR = 1.2;
 /** ベースラインの初期オフセット(ブロック上端から・フォントサイズ倍率) */
 const GLYPH_ASCENT = 0.85;
 
+/** 背景に対して読みやすい文字色を決める(元色が取得できても同色なら反転)。 */
+function resolveTextColor(color: Rgb | undefined, background: Rgb): Rgb {
+  const luminance = 0.2126 * background.r + 0.7152 * background.g +
+    0.0722 * background.b;
+  const fallback: Rgb = luminance < 0.5
+    ? { r: 1, g: 1, b: 1 }
+    : { r: 0, g: 0, b: 0 };
+  if (!color) return fallback;
+  if (colorsClose(color, background, 0.12)) return fallback;
+  return color;
+}
+
+/**
+ * 各ブロックの下にある「次のブロックの上端+余白」を返す。訳文が1行に収まらず
+ * 縮小が必要なとき、空いている行間にだけ描画領域を広げるために使う。
+ */
+function computeBottomLimits(blocks: Block[]): Map<string, number> {
+  const limits = new Map<string, number>();
+  for (const block of blocks) {
+    if (block.status !== "translated") continue;
+    let limit = Number.NEGATIVE_INFINITY;
+    for (const other of blocks) {
+      if (other.id === block.id) continue;
+      if (other.y1 > block.y0 + 1) continue; // block より上(または同一)
+      const overlap = Math.min(block.x1, other.x1) -
+        Math.max(block.x0, other.x0);
+      const narrower = Math.min(
+        block.x1 - block.x0,
+        other.x1 - other.x0,
+      );
+      if (narrower <= 0 || overlap < narrower * 0.5) continue;
+      if (other.y1 > limit) limit = other.y1;
+    }
+    if (Number.isFinite(limit)) limits.set(block.id, limit + 2);
+  }
+  return limits;
+}
+
 function drawBlock(
   page: ReturnType<PDFDocument["getPage"]>,
   block: Block,
@@ -243,33 +304,68 @@ function drawBlock(
   fonts: EmbeddedFonts,
   mask: { r: number; g: number; b: number },
   options: RenderOptions,
+  maxBottom?: number,
 ): void {
   const boxW = block.x1 - block.x0;
-  const boxH = block.y1 - block.y0;
-  if (boxW <= 1 || boxH <= 1) return;
-  page.drawRectangle({
-    x: block.x0 - 0.5,
-    y: block.y0 - 0.5,
-    width: boxW + 1,
-    height: boxH + 1,
-    color: rgb(mask.r, mask.g, mask.b),
-  });
+  const originalH = block.y1 - block.y0;
+  if (boxW <= 1 || originalH <= 1) return;
+  // 元テキストの背後の塗り色で塗り直す(スライドの色帯上の白文字など)。
+  const background: Rgb = block.backgroundColor ?? mask;
+  const textColor = resolveTextColor(block.color, background);
 
   const text = substituteChars(translation);
   const { primary, fallback } = pickFont(text, block.bold, fonts);
 
-  let fontSize = Math.max(4, block.fontSize);
+  // ページ右端を超えないよう折り返し幅を抑える(3%の逃しは残す)
+  const pageWidth = page.getWidth();
+  const wrapWidth = Math.max(
+    10,
+    Math.min(boxW * 1.03, pageWidth - block.x0 - 2),
+  );
   const minSize = Math.max(3, block.fontSize * options.minFontScale);
-  let lines: string[] = [];
-  // 幅に少し逃しを作り、1文字だけ折れる(例: タイトル末尾の「ド」)のを防ぐ
-  const wrapWidth = boxW * 1.03;
-  while (true) {
-    lines = wrapText(text, primary.pdf, wrapWidth, fontSize);
-    const totalH = lines.length * fontSize * LINE_HEIGHT_FACTOR;
-    // ボックスからのはみ出しは隣接ブロックとの重複の原因になるため厳密に収める
-    if (totalH <= boxH || fontSize <= minSize) break;
-    fontSize = Math.max(minSize, fontSize * 0.92);
+
+  const layoutAt = (height: number) => {
+    let fontSize = Math.max(4, block.fontSize);
+    let lines: string[] = [];
+    while (true) {
+      lines = wrapText(text, primary.pdf, wrapWidth, fontSize);
+      const totalH = lines.length * fontSize * LINE_HEIGHT_FACTOR;
+      // ボックスからのはみ出しは隣接ブロックとの重複の原因になるため厳密に収める
+      if (totalH <= height || fontSize <= minSize) break;
+      fontSize = Math.max(minSize, fontSize * 0.92);
+    }
+    return { lines, fontSize };
+  };
+
+  let boxH = originalH;
+  let result = layoutAt(boxH);
+  // 訳文が原文より長く、大きく縮小される場合は、下の空き行間へ少し広げる。
+  // 色帯(タイトルバー等)の上では背景からはみ出すため広げない。
+  const expandableBackground = !block.backgroundColor ||
+    (block.backgroundColor.r >= 0.98 && block.backgroundColor.g >= 0.98 &&
+      block.backgroundColor.b >= 0.98);
+  if (
+    maxBottom !== undefined && expandableBackground &&
+    result.fontSize < block.fontSize * 0.8
+  ) {
+    const expandedH = Math.min(block.y1 - maxBottom, originalH * 1.8);
+    if (expandedH > originalH * 1.15) {
+      const expanded = layoutAt(expandedH);
+      if (expanded.fontSize > result.fontSize) {
+        boxH = expandedH;
+        result = expanded;
+      }
+    }
   }
+  const { lines, fontSize } = result;
+  const boxY0 = block.y1 - boxH;
+  page.drawRectangle({
+    x: block.x0 - 0.5,
+    y: boxY0 - 0.5,
+    width: boxW + 1,
+    height: boxH + 1,
+    color: rgb(background.r, background.g, background.b),
+  });
 
   const lineHeight = fontSize * LINE_HEIGHT_FACTOR;
   const totalHeight = lines.length * lineHeight;
@@ -303,7 +399,7 @@ function drawBlock(
         y: baseline,
         size: fontSize,
         font: run.font,
-        color: rgb(0, 0, 0),
+        color: rgb(textColor.r, textColor.g, textColor.b),
       });
       x += run.font.widthOfTextAtSize(run.text, fontSize);
     }

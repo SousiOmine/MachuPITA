@@ -31,6 +31,8 @@ export interface CliOutcome {
   blocksFailed?: number;
   /** 翻訳対象だった段落数 (サマリ表示用) */
   blocksTotal?: number;
+  /** 実行中の警告(失敗段落・欠落プレースホルダなど) */
+  warnings?: string[];
 }
 
 export interface AppProps {

@@ -225,6 +225,53 @@ export function resolveTargetLanguageLabel(
   return code;
 }
 
+/**
+ * 各段落に「論文タイトル」「現在の節見出し」を文脈として割り当てる。
+ * 1段落ずつ独立に翻訳すると代名詞や略語の解釈がぶれるため、プロンプトに
+ * 短い文脈を添えて訳語・指示対象を安定させる。
+ */
+export function buildBlockContexts(
+  layouts: PageLayout[],
+): Map<string, string> {
+  const clean = (text: string) =>
+    text.replace(/\s+/g, " ").trim().slice(0, 160);
+  const blocks = layouts
+    .flatMap((layout) => layout.blocks)
+    .filter((block) => block.status !== "skipped")
+    .sort((a, b) => a.page - b.page || b.y1 - a.y1 || a.x0 - b.x0);
+
+  // 1ページ目で最も大きい見出しを論文タイトルとみなす
+  const firstPage = layouts[0]?.blocks.filter((b) => b.kind === "heading") ??
+    [];
+  const titleBlock = firstPage.reduce<Block | undefined>(
+    (best, block) =>
+      !best || block.fontSize > best.fontSize ||
+        (block.fontSize === best.fontSize && block.y1 > best.y1)
+        ? block
+        : best,
+    undefined,
+  );
+  const title = titleBlock && titleBlock.originalText.length > 5
+    ? clean(titleBlock.originalText)
+    : "";
+
+  const contexts = new Map<string, string>();
+  let section = "";
+  for (const block of blocks) {
+    const isTitle = titleBlock?.id === block.id;
+    if (block.kind === "heading" && !isTitle) {
+      section = clean(block.originalText);
+    }
+    const parts: string[] = [];
+    if (title && !isTitle) parts.push(`Paper title: "${title}".`);
+    if (section && !isTitle && block.kind !== "heading") {
+      parts.push(`Section: "${section}".`);
+    }
+    if (parts.length > 0) contexts.set(block.id, parts.join(" "));
+  }
+  return contexts;
+}
+
 export async function runPipeline(
   jobDir: string,
   job: JobInternals,
@@ -286,11 +333,17 @@ export async function runPipeline(
   job.snapshot.glossarySize = glossary.length;
 
   setStage("translating");
+  const blockContexts = buildBlockContexts(job.layouts);
   await translateBlocks(
     translatable,
     translator,
     {
       concurrency: job.options.concurrency ?? 3,
+      targetLanguage: resolveTargetLanguageLabel(
+        job.options.targetLanguage,
+        job.options.targetLanguageFree,
+      ),
+      contextFor: (block) => blockContexts.get(block.id),
     },
     signal,
     {

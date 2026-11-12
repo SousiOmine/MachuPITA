@@ -1,5 +1,6 @@
 import { assertEquals } from "@std/assert";
-import { JobManager } from "../engine/jobs.ts";
+import { buildBlockContexts, JobManager } from "../engine/jobs.ts";
+import type { Block, PageLayout } from "../engine/core/types.ts";
 import type { JobEvent, JobOptionsPayload } from "../engine/jobs.ts";
 
 const OPTIONS: JobOptionsPayload = {
@@ -128,4 +129,56 @@ Deno.test("JobManager: 存在しないIDの参照は undefined / false を返す
   assertEquals(mgr.get("nope"), undefined);
   assertEquals(mgr.cancel("nope"), false);
   assertEquals(mgr.subscribe("nope", () => {}), undefined);
+});
+
+function ctxBlock(
+  id: string,
+  text: string,
+  y: number,
+  kind: Block["kind"] = "body",
+  fontSize = 10,
+): Block {
+  return {
+    id,
+    page: 1,
+    columnIndex: 0,
+    x0: 0,
+    y0: y,
+    x1: 100,
+    y1: y + 20,
+    text,
+    originalText: text,
+    status: "pending",
+    fontSize,
+    bold: false,
+    centered: false,
+    kind,
+  };
+}
+
+Deno.test("buildBlockContexts: タイトルと節見出しを段落の文脈にする", () => {
+  const layout: PageLayout = {
+    pageNumber: 1,
+    width: 612,
+    height: 792,
+    blocks: [
+      ctxBlock("t", "A Study of Things", 740, "heading", 18),
+      ctxBlock("a", "Abstract text.", 700),
+      ctxBlock("h", "1. Introduction", 650, "heading", 12),
+      ctxBlock("b", "Body paragraph one.", 620),
+      ctxBlock("h2", "2. Method", 500, "heading", 12),
+      ctxBlock("c", "Method paragraph.", 470),
+    ],
+  };
+  const contexts = buildBlockContexts([layout]);
+  assertEquals(contexts.get("t"), undefined);
+  assertEquals(contexts.get("a"), 'Paper title: "A Study of Things".');
+  assertEquals(
+    contexts.get("b"),
+    'Paper title: "A Study of Things". Section: "1. Introduction".',
+  );
+  assertEquals(
+    contexts.get("c"),
+    'Paper title: "A Study of Things". Section: "2. Method".',
+  );
 });

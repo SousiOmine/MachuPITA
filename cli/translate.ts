@@ -1,9 +1,6 @@
 import { join } from "@std/path";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import {
-  FauxEchoTranslator,
-  PiTranslator,
-} from "../engine/core/translate.ts";
+import { FauxEchoTranslator, PiTranslator } from "../engine/core/translate.ts";
 import { resolveTargetLanguageLabel, runPipeline } from "../engine/jobs.ts";
 import type {
   JobEvent,
@@ -149,6 +146,7 @@ export function buildSummary(outcome: {
   blocksTranslated?: number;
   blocksFailed?: number;
   blocksTotal?: number;
+  warnings?: string[];
 }): string {
   if (outcome.status === "error") {
     return `エラー: ${outcome.error ?? "不明なエラー"}`;
@@ -168,6 +166,13 @@ export function buildSummary(outcome: {
       `注意: ${outcome.blocksFailed} 段落は翻訳に失敗し、原文のまま出力しました` +
         (outcome.blocksTotal ? ` (全 ${outcome.blocksTotal} 段落)` : ""),
     );
+  }
+  const warnings = outcome.warnings ?? [];
+  if (warnings.length > 0) {
+    lines.push("");
+    lines.push(`警告: ${warnings.length} 件`);
+    for (const w of warnings.slice(0, 5)) lines.push(`  - ${w}`);
+    if (warnings.length > 5) lines.push(`  ...ほか ${warnings.length - 5} 件`);
   }
   return lines.join("\n");
 }

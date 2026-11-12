@@ -14,6 +14,7 @@ import {
   isAuthError,
   isGlossaryCapable,
   isJapaneseTarget,
+  looksUntranslated,
   parseTranslationResponse,
   PiTranslator,
   translateBlocks,
@@ -43,7 +44,10 @@ Deno.test("parseTranslationResponse skips empty blocks and throws without one", 
 Deno.test("parseTranslationResponse tolerates fences, chatter and attributes", () => {
   const cases: Array<[string, string]> = [
     ["```xml\n<translated>訳文A</translated>\n```", "訳文A"],
-    ["Sure!\n<translated>\n  訳文 B  \n</translated>\nHope this helps.", "訳文 B"],
+    [
+      "Sure!\n<translated>\n  訳文 B  \n</translated>\nHope this helps.",
+      "訳文 B",
+    ],
     ["<translated>訳文C</translated>", "訳文C"],
     ["<target>source</target>\n<translated>訳文D</translated>", "訳文D"],
     ["<translated>\r\n訳文E\r\n</translated>", "訳文E"],
@@ -385,4 +389,75 @@ Deno.test("translateBlocks appends persistently missing placeholders at the end"
   assertEquals(blocks[0].translation?.includes("[17]"), true);
   assertEquals(blocks[0].warnings?.length ?? 0, 1);
   assertEquals(blocks[0].warnings?.[0].includes("文末に補完"), true);
+});
+
+Deno.test("buildTranslationUserPrompt: 文脈を添え、繰り返さないよう指示する", () => {
+  const user = buildTranslationUserPrompt(
+    "We propose a method.",
+    "日本語",
+    [],
+    'Paper title: "A Study". Section: "3. Method".',
+  );
+  assertEquals(user.includes("Document context"), true);
+  assertEquals(user.includes("A Study"), true);
+  assertEquals(user.includes("do not translate or repeat"), true);
+});
+
+Deno.test("looksUntranslated: 英語段落が英語のまま返されたら検出する", () => {
+  const source = "This paragraph has enough English words to translate.";
+  assertEquals(looksUntranslated(source, source, "日本語"), true);
+  assertEquals(
+    looksUntranslated(
+      source,
+      "この段落には翻訳すべき英単語が十分にある。",
+      "日本語",
+    ),
+    false,
+  );
+  assertEquals(
+    looksUntranslated("Short heading", "Short heading", "日本語"),
+    false,
+  );
+  assertEquals(looksUntranslated(source, source, "English"), false);
+});
+
+Deno.test("translateBlocks: 原文がそのまま返された応答はリトライし、文脈を渡す", async () => {
+  const source = "This paragraph has enough English words to translate.";
+  const blocks = [makeBlock("b1", source)];
+  class EchoThenTranslate implements Translator {
+    calls = 0;
+    contexts: (string | undefined)[] = [];
+    async translate(
+      text: string,
+      _signal: AbortSignal,
+      context?: string,
+    ): Promise<string> {
+      this.calls++;
+      this.contexts.push(context);
+      return this.calls === 1
+        ? text
+        : "この段落には翻訳すべき英単語が十分にある。";
+    }
+    usage() {
+      return { input: 0, output: 0, total: 0, costTotal: 0 };
+    }
+  }
+  const translator = new EchoThenTranslate();
+  await translateBlocks(
+    blocks,
+    translator,
+    {
+      concurrency: 1,
+      targetLanguage: "日本語",
+      contextFor: () => 'Paper title: "A Study".',
+    },
+    new AbortController().signal,
+    {},
+    3,
+    0,
+  );
+  assertEquals(translator.calls, 2);
+  assertEquals(translator.contexts[0], 'Paper title: "A Study".');
+  assertEquals(blocks[0].status, "translated");
+  assertEquals(blocks[0].translation?.includes("翻訳すべき"), true);
 });

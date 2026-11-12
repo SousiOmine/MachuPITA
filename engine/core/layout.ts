@@ -5,6 +5,7 @@ import type {
   PageLayout,
   TextItemBox,
 } from "./types.ts";
+import type { Rgb } from "./visibility.ts";
 import { looksLikeFormula } from "./classify.ts";
 
 const ROTATION_TOLERANCE = 0.12;
@@ -12,7 +13,7 @@ const ROTATION_TOLERANCE = 0.12;
 /** 項目と行でフォントサイズが大きく異なる場合(上付き・下付き・分数など) */
 const MIXED_SIZE_RATIO = 1.25;
 /** 混在サイズ時のベースライン一致許容(大きい側のフォントサイズ×この値) */
-const MIXED_BASELINE_TOLERANCE = 0.6;
+const MIXED_BASELINE_TOLERANCE = 0.8;
 /** 同一サイズ時のベースライン一致許容(フォントサイズ×この値) */
 const SAME_SIZE_TOLERANCE = 0.32;
 /** bbox の上下マージン(描画フォントのアセント/ディセントを吸収する) */
@@ -21,6 +22,11 @@ const DESCENT = 0.35;
 /** 行内セル分割とみなす最小ギャップ(フォントサイズ倍率 / 絶対値pt) */
 const CELL_GAP_RATIO = 1;
 const CELL_GAP_MIN_PT = 8;
+/** 箇条書きの行頭記号。行頭に来たら段落境界とみなす(スライドの箇条書き対策)。 */
+const BULLET_RE =
+  /^[\u2022\u25cf\u25cb\u25e6\u25aa\u25ab\u25b8\u25b9\u25ba\u25b6\u25c6\u25c7\u25a0\u25a1\u2605\u2606\u203b\u30fb]/;
+/** CJK(かな・漢字・全角記号)。行を連結する際に空白を入れない判定に使う。 */
+const CJK_CHAR_RE = /[\u3000-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uff00-\uffef]/;
 
 function baselineTolerance(itemFontSize: number, lineFontSize: number): number {
   const big = Math.max(itemFontSize, lineFontSize);
@@ -46,6 +52,24 @@ export function buildLines(items: TextItemBox[]): LineBox[] {
         bestDelta = delta;
       }
     }
+    if (!best) {
+      // 上付き・下付きの数式片は、通常の許容差では別行になりやすい。
+      // 近くの大きい行の x 範囲内にあれば、その行の一部として取り込む。
+      let fallback: { line: LineBox; items: TextItemBox[] } | undefined;
+      let fallbackDelta = Infinity;
+      for (const entry of lines) {
+        if (entry.line.fontSize < item.fontSize * 1.25) continue;
+        if (item.x < entry.line.x0 - 30 || item.x > entry.line.x1 + 30) {
+          continue;
+        }
+        const delta = Math.abs(entry.line.baselineY - item.y);
+        if (delta <= entry.line.fontSize * 0.9 && delta < fallbackDelta) {
+          fallback = entry;
+          fallbackDelta = delta;
+        }
+      }
+      best = fallback;
+    }
     if (best) {
       best.items.push(item);
     } else {
@@ -70,6 +94,8 @@ function emptyLine(item: TextItemBox): LineBox {
     text: "",
     fontSize: item.fontSize,
     bold: isBoldItem(item),
+    color: item.color,
+    backgroundColor: item.backgroundColor,
   };
 }
 
@@ -110,6 +136,30 @@ function dominantBaseline(items: TextItemBox[]): number {
   return (main ?? items[0]).y;
 }
 
+/** 文字数で重み付けした最頻色を返す(リンク色など一部だけ違う場合に多数派を採る)。 */
+function dominantColor<T>(
+  items: T[],
+  pick: (item: T) => Rgb | undefined,
+  weightOf: (item: T) => number,
+): Rgb | undefined {
+  const weights = new Map<string, { color: Rgb; weight: number }>();
+  for (const item of items) {
+    const color = pick(item);
+    if (!color) continue;
+    const key = `${color.r.toFixed(3)},${color.g.toFixed(3)},${
+      color.b.toFixed(3)
+    }`;
+    const entry = weights.get(key) ?? { color, weight: 0 };
+    entry.weight += Math.max(1, weightOf(item));
+    weights.set(key, entry);
+  }
+  let best: { color: Rgb; weight: number } | undefined;
+  for (const entry of weights.values()) {
+    if (!best || entry.weight > best.weight) best = entry;
+  }
+  return best?.color;
+}
+
 /** テキスト項目群から1行の LineBox を組み立てる(セル行は cells を保持する)。 */
 function buildLineBox(items: TextItemBox[], cells?: LineBox[]): LineBox {
   let text = "";
@@ -144,6 +194,12 @@ function buildLineBox(items: TextItemBox[], cells?: LineBox[]): LineBox {
     text: normalizeLineText(text),
     fontSize: representativeFontSize(items),
     bold: boldWeight * 2 >= items.length && boldWeight > 0,
+    color: dominantColor(items, (it) => it.color, (it) => it.str.trim().length),
+    backgroundColor: dominantColor(
+      items,
+      (it) => it.backgroundColor,
+      (it) => it.str.trim().length,
+    ),
     cells,
   };
 }
@@ -161,6 +217,7 @@ function assembleLine(items: TextItemBox[]): LineBox {
   // 行内の数式片(√ など)は前行のテキストと x 範囲が重なることがある。
   // 直前の項目だけでなく「ここまでで最も右の端」との差で隙間を測る。
   let runningEnd = items.length > 0 ? items[0].x + items[0].width : 0;
+  const candidates: number[] = [];
   for (let i = 0; i < items.length; i++) {
     if (i === 0) continue;
     const prev = items[i - 1];
@@ -170,10 +227,25 @@ function assembleLine(items: TextItemBox[]): LineBox {
       gap >= Math.max(prev.fontSize * CELL_GAP_RATIO, CELL_GAP_MIN_PT) &&
       prev.str.trim() !== "" && it.str.trim() !== ""
     ) {
-      closeCell(i);
-      cellStart = i;
+      candidates.push(i);
     }
     runningEnd = Math.max(runningEnd, it.x + it.width);
+  }
+  // 1か所だけ大きな隙間がある行は、インライン数式や字下げの可能性が高い。
+  // その場合は左右がどちらも短い(表のセルらしい)ときだけ分割する。
+  const wordCount = (list: TextItemBox[]) =>
+    list.reduce(
+      (n, it) => n + (it.str.trim().match(/\S+/g)?.length ?? 0),
+      0,
+    );
+  for (const i of candidates) {
+    if (candidates.length === 1) {
+      const leftWords = wordCount(items.slice(0, i));
+      const rightWords = wordCount(items.slice(i));
+      if (leftWords > 6 || rightWords > 6) continue;
+    }
+    closeCell(i);
+    cellStart = i;
   }
   closeCell(items.length);
   const line = buildLineBox(items);
@@ -299,12 +371,16 @@ export function groupParagraphs(
     );
     const centeredContinuation = centerDelta < Math.max(prevWidth, lineWidth) *
         0.05;
-    const indentStartsParagraph = !centeredContinuation &&
+    const prevIsBullet = BULLET_RE.test(prev.text.trimStart());
+    // 箇条書きの折り返し行は記号の分だけ右にずれる。字下げ扱いにしない。
+    const indentStartsParagraph = !prevIsBullet && !centeredContinuation &&
       line.x0 - prev.x0 > fs * 0.65;
     const hangingEntryStarts = current.length >= 2 &&
       prev.x0 - line.x0 > fs * 0.65;
     const centeredHeadingBeforeBody = prevWidth < lineWidth * 0.6 &&
       line.x0 < prev.x0 - fs * 3;
+    // 箇条書きの行は前の項目と融合させない(「…。• 次…」のような潰れを防ぐ)
+    const bulletStartsParagraph = BULLET_RE.test(line.text.trimStart());
     const maxMergeGap = Math.min(
       fs * 1.85,
       Math.max(fs * 1.15, (typicalGap ?? fs * 1.2) * 1.3),
@@ -318,6 +394,7 @@ export function groupParagraphs(
       !lineIsDebris &&
       !indentStartsParagraph &&
       !hangingEntryStarts &&
+      !bulletStartsParagraph &&
       !centeredHeadingBeforeBody
     ) {
       current.push(line);
@@ -354,8 +431,14 @@ function mergeLineTexts(group: LineBox[]): string {
     }
     const prevEndsWithHyphen = /[\u2010-\u2015-]$/.test(text);
     const nextStartsLower = /^[a-z]/.test(line.text);
+    const prevChar = text.slice(-1);
+    const nextChar = line.text.charAt(0);
+    // 日本語などのCJKは行末で単語が切れても空白を入れない
+    const cjkJoin = CJK_CHAR_RE.test(prevChar) || CJK_CHAR_RE.test(nextChar);
     if (prevEndsWithHyphen && nextStartsLower) {
       text = text.replace(/[\u2010-\u2015-]$/, "") + line.text;
+    } else if (cjkJoin) {
+      text += line.text;
     } else {
       text += " " + line.text;
     }
@@ -409,6 +492,16 @@ function makeBlock(
     status: "pending",
     fontSize,
     bold: group.every((l) => l.bold),
+    color: dominantColor(
+      group,
+      (l) => l.color,
+      (l) => l.text.trim().length,
+    ),
+    backgroundColor: dominantColor(
+      group,
+      (l) => l.backgroundColor,
+      (l) => l.text.trim().length,
+    ),
     centered: isCentered(group),
     kind: group.every((line) => line.bold) || fontSize > medianFs * 1.18
       ? "heading"

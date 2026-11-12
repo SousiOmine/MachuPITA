@@ -1,6 +1,10 @@
 import { getDocumentProxy } from "unpdf";
 import type { ExtractedPage, TextItemBox } from "./types.ts";
-import { filterVisibleItems, findInvisibleTextOrigins } from "./visibility.ts";
+import {
+  analyzePagePaint,
+  filterVisibleItems,
+  findTextStyle,
+} from "./visibility.ts";
 
 /** pdf.js のフォントローダーID("g_d0_f1" など)から得た実際のフォント情報。 */
 interface FontTrait {
@@ -73,10 +77,13 @@ export async function extractPages(
     const page = await pdf.getPage(i);
     const viewport = page.getViewport({ scale: 1 });
     const content = await page.getTextContent();
-    // 図の中に埋め込まれた不可視テキスト(クリップ外・白塗り等)を除外する
-    let invisibleOrigins: { x: number; y: number }[] = [];
+    // 図の中に埋め込まれた不可視テキスト(クリップ外・後の塗りに覆われた・
+    // 背景と同色など)を除外する。あわせて文字色と背景色を取得する。
+    let paint = { invisibleOrigins: [], styles: [] } as Awaited<
+      ReturnType<typeof analyzePagePaint>
+    >;
     try {
-      invisibleOrigins = await findInvisibleTextOrigins(page);
+      paint = await analyzePagePaint(page);
     } catch {
       // 検出に失敗した場合は除外せず続行
     }
@@ -95,6 +102,7 @@ export async function extractPages(
       const skew = Math.atan2(m[1], m[0]);
       const fontId = String(item.fontName ?? "");
       const trait = fontTraits.get(fontId);
+      const style = findTextStyle(paint.styles, m[4], m[5], fontSize);
       items.push({
         str: item.str,
         x: m[4],
@@ -104,13 +112,15 @@ export async function extractPages(
         fontName: trait?.name ?? fontId,
         bold: trait?.bold,
         rotation: Math.abs(skew),
+        color: style?.textColor,
+        backgroundColor: style?.backgroundColor,
       });
     }
     pages.push({
       pageNumber: i,
       width: viewport.width,
       height: viewport.height,
-      items: filterVisibleItems(items, invisibleOrigins),
+      items: filterVisibleItems(items, paint.invisibleOrigins),
     });
     page.cleanup();
     onProgress?.(i, pdf.numPages);

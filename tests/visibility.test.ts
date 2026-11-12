@@ -1,6 +1,9 @@
 import { assertEquals } from "@std/assert";
 import { getResolvedPDFJS } from "unpdf";
-import { findInvisibleTextOrigins } from "../engine/core/visibility.ts";
+import {
+  analyzePagePaint,
+  findInvisibleTextOrigins,
+} from "../engine/core/visibility.ts";
 
 /** オペレータリストを返すだけのモックページ。 */
 function mockPage(
@@ -93,4 +96,82 @@ Deno.test("findInvisibleTextOrigins: エラー時は空配列を返す(除外な
   };
   const origins = await findInvisibleTextOrigins(page);
   assertEquals(origins.length, 0);
+});
+
+Deno.test("analyzePagePaint: 後から塗られた矩形に覆われたテキストを不可視にする", async () => {
+  const pdfjs = await getResolvedPDFJS();
+  const OPS = pdfjs.OPS as Record<string, number>;
+  const page = mockPage(
+    [
+      OPS.setFillRGBColor,
+      OPS.setTextMatrix,
+      OPS.showText,
+      OPS.setFillRGBColor,
+      OPS.constructPath,
+    ],
+    [
+      [[0, 0, 0]],
+      [1, 0, 0, 1, 10, 10],
+      [["x"]],
+      [[1, 1, 1]],
+      [OPS.fill, [], [0, 0, 100, 100]],
+    ],
+  );
+  const origins = await findInvisibleTextOrigins(page);
+  assertEquals(origins.length, 1);
+  assertEquals(origins[0], { x: 10, y: 10 });
+});
+
+Deno.test("analyzePagePaint: 色帯の上の白文字は可視とし、色を記録する", async () => {
+  const pdfjs = await getResolvedPDFJS();
+  const OPS = pdfjs.OPS as Record<string, number>;
+  const page = mockPage(
+    [
+      OPS.setFillRGBColor,
+      OPS.constructPath,
+      OPS.setFillRGBColor,
+      OPS.setTextMatrix,
+      OPS.showText,
+    ],
+    [
+      [[0, 0, 0.6]],
+      [OPS.fill, [], [0, 0, 200, 40]],
+      [[1, 1, 1]],
+      [1, 0, 0, 1, 10, 10],
+      [["Title"]],
+    ],
+  );
+  const { invisibleOrigins, styles } = await analyzePagePaint(page);
+  assertEquals(invisibleOrigins.length, 0);
+  assertEquals(styles.length, 1);
+  assertEquals(styles[0].textColor, { r: 1, g: 1, b: 1 });
+  assertEquals(styles[0].backgroundColor.r, 0);
+  assertEquals(styles[0].backgroundColor.b, 0.6);
+});
+
+Deno.test("analyzePagePaint: 同一位置に訳文を描き直した場合は消さない", async () => {
+  const pdfjs = await getResolvedPDFJS();
+  const OPS = pdfjs.OPS as Record<string, number>;
+  const page = mockPage(
+    [
+      OPS.setTextMatrix,
+      OPS.showText,
+      OPS.setFillRGBColor,
+      OPS.constructPath,
+      OPS.setFillRGBColor,
+      OPS.setTextMatrix,
+      OPS.showText,
+    ],
+    [
+      [1, 0, 0, 1, 10, 10],
+      [["原文"]],
+      [[1, 1, 1]],
+      [OPS.fill, [], [0, 0, 100, 30]],
+      [[0, 0, 0]],
+      [1, 0, 0, 1, 10, 10],
+      [["訳文"]],
+    ],
+  );
+  const { invisibleOrigins } = await analyzePagePaint(page);
+  assertEquals(invisibleOrigins.length, 0);
 });

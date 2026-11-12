@@ -235,3 +235,35 @@ Deno.test("buildLines は PDF 由来の太字フラグをフォント名より�
   ]);
   assertEquals(lines.map((l) => l.bold), [true, false]);
 });
+
+Deno.test("groupParagraphs は箇条書きの行で段落を分ける", () => {
+  const lines = groupParagraphs([
+    line("• First item", 72, 700),
+    line("• Second item", 72, 685),
+    line("• Third item", 72, 670),
+  ], 0);
+  assertEquals(lines.length, 3);
+  assertEquals(lines[0][0].text, "• First item");
+});
+
+Deno.test("groupParagraphs は箇条書きの折り返し行を記号の字下げで分割しない", () => {
+  const bullet = line("• A long item", 72, 700);
+  const cont = line("continued on the next line", 90, 685);
+  const lines = groupParagraphs([bullet, cont], 0);
+  assertEquals(lines.length, 1);
+});
+
+Deno.test("analyzePage は日本語の折り返し行を空白なしで連結する", () => {
+  const page: ExtractedPage = {
+    pageNumber: 1,
+    width: 595,
+    height: 842,
+    items: [
+      item("これは日本語の", 72, 700),
+      item("文章です。", 72, 685),
+    ],
+  };
+  const layout = analyzePage(page);
+  assertEquals(layout.blocks.length, 1);
+  assertEquals(layout.blocks[0].originalText, "これは日本語の文章です。");
+});
