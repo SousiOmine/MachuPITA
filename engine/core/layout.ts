@@ -36,6 +36,15 @@ function baselineTolerance(itemFontSize: number, lineFontSize: number): number {
 }
 
 export function buildLines(items: TextItemBox[]): LineBox[] {
+  return buildLinesDetailed(items).map((entry) => entry.line);
+}
+
+/**
+ * 行を組み立て、各行に属するテキスト項目も返す(段分割のため)。
+ */
+export function buildLinesDetailed(
+  items: TextItemBox[],
+): { line: LineBox; items: TextItemBox[] }[] {
   const usable = items.filter((it) => it.rotation < ROTATION_TOLERANCE);
   const sorted = [...usable].sort((a, b) => b.y - a.y || a.x - b.x);
   const lines: { line: LineBox; items: TextItemBox[] }[] = [];
@@ -76,10 +85,10 @@ export function buildLines(items: TextItemBox[]): LineBox[] {
       lines.push({ line: emptyLine(item), items: [item] });
     }
   }
-  const result: LineBox[] = [];
+  const result: { line: LineBox; items: TextItemBox[] }[] = [];
   for (const entry of lines) {
     entry.items.sort((a, b) => a.x - b.x);
-    result.push(assembleLine(entry.items));
+    result.push({ line: assembleLine(entry.items), items: entry.items });
   }
   return result;
 }
@@ -509,9 +518,165 @@ function makeBlock(
   };
 }
 
+/** 段間の谷とみなす最小の空き幅(フォントサイズ倍率 / 絶対値pt)。 */
+const GUTTER_GAP_RATIO = 0.6;
+const GUTTER_GAP_MIN_PT = 6;
+
+/** ベースラインが同じテキスト項目をまとめる(段の谷を探すための下ごしらえ)。 */
+function rowsByBaseline(items: TextItemBox[]): TextItemBox[][] {
+  const rows: TextItemBox[][] = [];
+  const sorted = [...items].sort((a, b) => b.y - a.y || a.x - b.x);
+  for (const item of sorted) {
+    const row = rows.find((r) =>
+      Math.abs(r[0].y - item.y) <= Math.max(1.5, item.fontSize * 0.3)
+    );
+    if (row) row.push(item);
+    else rows.push([item]);
+  }
+  return rows;
+}
+
+/**
+ * ページ縦方向に走る段間の谷(gutter)の x 座標を推定する。
+ *
+ * 2段組の論文では左右の段の行が同じベースラインに載ることがあり、行の組み立てで
+ * 左右が1行に融合してしまう(本文が全幅に流れて重なる)。ここでは生のテキスト
+ * 項目をベースラインごとに見て、同じ行の左右に「語間より広い空き」を挟んで
+ * 内容がある行が多数を占める x を谷とみなす。段をまたぐ見出し・要旨の行は
+ * 谷を横切るため、横切る行が少ないことを条件にして誤検出を防ぐ。
+ */
+export function detectColumnGutter(
+  items: TextItemBox[],
+  pageWidth: number,
+): number | undefined {
+  const usable = items.filter((it) =>
+    it.rotation < ROTATION_TOLERANCE && it.str.trim() !== ""
+  );
+  if (usable.length < 20) return undefined;
+  const rows = rowsByBaseline(usable);
+  if (rows.length < 6) return undefined;
+  for (const row of rows) row.sort((a, b) => a.x - b.x);
+
+  const from = Math.floor(pageWidth * 0.3);
+  const to = Math.ceil(pageWidth * 0.7);
+  let best:
+    | {
+      x: number;
+      split: number;
+      crossing: number;
+      leftOnly: number;
+      rightOnly: number;
+    }
+    | undefined;
+  for (let x = from; x <= to; x++) {
+    let split = 0;
+    let crossing = 0;
+    let leftOnly = 0;
+    let rightOnly = 0;
+    for (const row of rows) {
+      let covered = false;
+      let leftEnd = -Infinity;
+      let rightStart = Infinity;
+      for (const it of row) {
+        const end = it.x + it.width;
+        if (it.x < x - 0.5 && end > x + 0.5) covered = true;
+        if (end <= x) leftEnd = Math.max(leftEnd, end);
+        else if (it.x >= x) rightStart = Math.min(rightStart, it.x);
+      }
+      if (covered) {
+        crossing++;
+        continue;
+      }
+      if (leftEnd !== -Infinity && rightStart === Infinity) leftOnly++;
+      else if (leftEnd === -Infinity && rightStart !== Infinity) rightOnly++;
+      if (leftEnd === -Infinity || rightStart === Infinity) continue;
+      const gap = rightStart - leftEnd;
+      const fs = row[0].fontSize;
+      if (gap >= Math.max(fs * GUTTER_GAP_RATIO, GUTTER_GAP_MIN_PT)) split++;
+    }
+    // 谷を挟んで左右に内容がある行が十分にあること。1段組のページでは語間
+    // (0.2〜0.35em 程度)しか空かず、この条件を満たす行がほとんど無い。
+    if (split < 5) continue;
+    if (split + leftOnly + rightOnly < rows.length * 0.5) continue;
+    const candidate = { x, split, crossing, leftOnly, rightOnly };
+    if (
+      !best || candidate.split > best.split ||
+      (candidate.split === best.split && candidate.crossing < best.crossing)
+    ) {
+      best = candidate;
+    }
+  }
+  if (!best) return undefined;
+  // 段をまたぐ行(タイトル・要旨・全幅の表)が多すぎるページは2段組とみなさない。
+  if (best.crossing > rows.length * 0.6) return undefined;
+  return best.x;
+}
+
+/**
+ * 段間の谷より左/右で行を分割し、左右を別々の行として組み直す。
+ * 谷を横切る行(全幅の見出しなど)はそのまま残す。
+ */
+function splitLinesAtGutter(
+  detailed: { line: LineBox; items: TextItemBox[] }[],
+  gutter: number,
+): LineBox[] {
+  const lines: LineBox[] = [];
+  for (const entry of detailed) {
+    const left: TextItemBox[] = [];
+    const right: TextItemBox[] = [];
+    let covered = false;
+    for (const it of entry.items) {
+      const end = it.x + it.width;
+      if (it.x < gutter - 0.5 && end > gutter + 0.5) covered = true;
+    }
+    if (covered) {
+      lines.push(entry.line);
+      continue;
+    }
+    for (const it of entry.items) {
+      if (it.x + it.width <= gutter) left.push(it);
+      else right.push(it);
+    }
+    if (left.length === 0 || right.length === 0) {
+      lines.push(entry.line);
+      continue;
+    }
+    // 谷の位置に「語間より広い空き」がある行だけを分割する。1段組のページで
+    // たまたま単語の切れ目が谷の x に重なった行を割らないため。
+    const leftEnd = Math.max(...left.map((it) => it.x + it.width));
+    const rightStart = Math.min(...right.map((it) => it.x));
+    const fs = entry.line.fontSize;
+    if (
+      rightStart - leftEnd < Math.max(fs * GUTTER_GAP_RATIO, GUTTER_GAP_MIN_PT)
+    ) {
+      lines.push(entry.line);
+      continue;
+    }
+    lines.push(assembleLine(left), assembleLine(right));
+  }
+  return lines;
+}
+
 export function analyzePage(page: ExtractedPage): PageLayout {
-  const lines = buildLines(page.items);
-  const columns = detectColumns(lines, page.width);
+  const detailed = buildLinesDetailed(page.items);
+  let lines = detailed.map((entry) => entry.line);
+  const gutter = detectColumnGutter(page.items, page.width);
+  // 段間の谷がページ中央付近にあるときだけ2段組とみなす。片側に寄った谷は
+  // 表や字下げの偶然なので、1段組のページを割らないよう無視する。
+  const ratio = gutter === undefined ? 0 : gutter / page.width;
+  let columns: ReturnType<typeof detectColumns>;
+  if (gutter !== undefined && ratio >= 0.4 && ratio <= 0.6) {
+    // 左右の段の行が同じベースラインに載り、1行に融合している行を分ける。
+    lines = splitLinesAtGutter(detailed, gutter);
+    // 検出した谷をそのまま段境界にする。全幅の要旨・見出しがあると
+    // detectColumns は「段を横切る行」が多いとして2段を諦めてしまうため。
+    columns = [
+      { index: 0, x0: 0, x1: gutter },
+      { index: 1, x0: gutter, x1: page.width },
+    ];
+  } else {
+    columns = detectColumns(lines, page.width);
+  }
   const blocks: Block[] = [];
   const byColumn = new Map<number, LineBox[]>();
   const gridRows = new Map<number, LineBox[]>();

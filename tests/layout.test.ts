@@ -151,6 +151,39 @@ Deno.test("analyzePage keeps paragraphs inside their detected columns", () => {
   assertEquals(leftBlock?.originalText.includes("Right paragraph"), false);
 });
 
+Deno.test("analyzePage は左右の段の行が同じベースラインでも段を分ける", () => {
+  // 2段組の本文で左右の行が同じ y に載り、段間の空きが語間より広いだけの
+  // ページ。1行に融合すると本文が全幅に流れて重なる。
+  const items: TextItemBox[] = [];
+  const left = "evaluation of nonverbal emotional vocalization";
+  const right = "associated with traditional human emotion labeling";
+  for (let i = 0; i < 12; i++) {
+    items.push(item(`${left} ${i}`, 42, 700 - i * 12, 10));
+    items.push(item(`${right} ${i}`, 306, 700 - i * 12, 10));
+  }
+  const layout = analyzePage({
+    pageNumber: 1,
+    width: 594,
+    height: 792,
+    items,
+  });
+  const leftBlocks = layout.blocks.filter((b) =>
+    b.originalText.includes("nonverbal emotional vocalization")
+  );
+  const rightBlocks = layout.blocks.filter((b) =>
+    b.originalText.includes("traditional human emotion")
+  );
+  assertEquals(leftBlocks.length > 0, true);
+  assertEquals(rightBlocks.length > 0, true);
+  // 左右が1ブロックに混ざっていない
+  for (const block of leftBlocks) {
+    assertEquals(block.originalText.includes("traditional human"), false);
+  }
+  for (const block of rightBlocks) {
+    assertEquals(block.originalText.includes("nonverbal emotional"), false);
+  }
+});
+
 Deno.test("buildLines attaches superscript items to the main line", () => {
   // 上付きの ∗ (小フォント・ベースラインより上) は名前と同じ行に取り込まれる
   const lines = buildLines([

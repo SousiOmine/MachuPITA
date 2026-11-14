@@ -17,6 +17,28 @@ const CJK_FONTS = {
 
 const FONT_DIR = join(PROJECT_ROOT, "assets", "fonts");
 
+/**
+ * 編集用に PDF を読み込む。
+ *
+ * 空パスワードで暗号化された PDF(J-STAGE 配布の論文など)は少なくない。
+ * `ignoreEncryption: true` は暗号化を無視するだけで復号はしないため、読み込んだ
+ * ストリームが暗号文のまま保存され、本文・フォントが壊れる(訳文も描画されない)。
+ * 空パスワードを渡して復号させる。
+ */
+async function loadForEdit(bytes: Uint8Array): Promise<PDFDocument> {
+  try {
+    return await PDFDocument.load(bytes, { password: "" });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/encrypt/i.test(message)) {
+      throw new Error(
+        "PDF が暗号化されています。パスワード付きのPDFは翻訳できません(空パスワードのPDFは翻訳できます)。",
+      );
+    }
+    throw err;
+  }
+}
+
 function hasCJK(text: string): boolean {
   return /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF\u3000-\u303F\uFF00-\uFFEF]/
     .test(
@@ -169,9 +191,7 @@ export async function renderTranslatedPdf(
   pages: PageLayout[],
   options: RenderOptions,
 ): Promise<Uint8Array> {
-  const doc = await PDFDocument.load(sourceBytes, {
-    ignoreEncryption: true,
-  });
+  const doc = await loadForEdit(sourceBytes);
   const fonts = await embedFonts(doc);
   const mask = hexToRgb(options.maskColor);
 
@@ -411,12 +431,8 @@ export async function buildDualPdf(
   originalBytes: Uint8Array,
   translatedBytes: Uint8Array,
 ): Promise<Uint8Array> {
-  const originalDoc = await PDFDocument.load(originalBytes, {
-    ignoreEncryption: true,
-  });
-  const translatedDoc = await PDFDocument.load(translatedBytes, {
-    ignoreEncryption: true,
-  });
+  const originalDoc = await loadForEdit(originalBytes);
+  const translatedDoc = await loadForEdit(translatedBytes);
   const out = await PDFDocument.create();
   const count = Math.min(
     originalDoc.getPageCount(),
