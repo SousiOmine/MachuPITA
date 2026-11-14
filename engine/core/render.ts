@@ -1,4 +1,4 @@
-import { PDFDocument, rgb } from "@cantoo/pdf-lib";
+import { PDFDict, PDFDocument, PDFName, PDFRef, rgb } from "@cantoo/pdf-lib";
 import * as fontkitModule from "fontkit";
 import { join } from "@std/path";
 import { PROJECT_ROOT } from "../settings.ts";
@@ -27,7 +27,26 @@ const FONT_DIR = join(PROJECT_ROOT, "assets", "fonts");
  */
 async function loadForEdit(bytes: Uint8Array): Promise<PDFDocument> {
   try {
-    return await PDFDocument.load(bytes, { password: "" });
+    const doc = await PDFDocument.load(bytes, { password: "" });
+    // 復号済みの文書に暗号化辞書(/Encrypt)を残すと、保存時に
+    // オブジェクトストリーム内の辞書が壊れ、Acrobat が
+    // 「文書を読み取り中に問題が発生しました (114)」で開けなくなる。
+    // 辞書そのものと trailer の参照を取り除く。
+    const encrypt = doc.context.trailerInfo.Encrypt;
+    if (encrypt) {
+      doc.context.delete(encrypt as PDFRef);
+      delete (doc.context.trailerInfo as { Encrypt?: unknown }).Encrypt;
+    }
+    // trailer の参照が外れても暗号化辞書そのものが context に残る場合がある。
+    for (const [ref, object] of doc.context.enumerateIndirectObjects()) {
+      if (
+        object instanceof PDFDict && object.get(PDFName.of("O")) &&
+        object.get(PDFName.of("U"))
+      ) {
+        doc.context.delete(ref);
+      }
+    }
+    return doc;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (/encrypt/i.test(message)) {
